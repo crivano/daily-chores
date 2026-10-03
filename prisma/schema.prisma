@@ -1,0 +1,80 @@
+// Daily Chores — schema (Neon Postgres)
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String             @id @default(cuid())
+  googleSub     String             @unique
+  email         String             @unique
+  name          String?
+  timezone      String? // IANA, ex.: America/Sao_Paulo
+  tasks         Task[]
+  subscriptions PushSubscription[]
+}
+
+model Task {
+  id            String       @id @default(cuid())
+  userId        String
+  user          User         @relation(fields: [userId], references: [id])
+  name          String
+  active        Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  scheduleType  String // "WEEKLY" | "MONTHLY"
+  weekdays      Int[] // 0=domingo … 6=sábado (JS getDay)
+  monthDay      Int? // 1..31
+  time          String? // "HH:mm", null = sem hora fixa
+  anchorId      String?
+  anchor        Task?        @relation("chain", fields: [anchorId], references: [id])
+  dependents    Task[]       @relation("chain")
+  offsetMinutes Int? // obrigatório se anchorId != null && time == null
+  completions   Completion[]
+
+  @@index([userId])
+}
+
+model Completion {
+  id          String   @id @default(cuid())
+  taskId      String
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId      String
+  localDate   String // "YYYY-MM-DD" no fuso do usuário
+  completedAt DateTime // timestamp real do clique (UTC)
+
+  @@unique([taskId, localDate])
+  @@index([userId, localDate])
+}
+
+model PushSubscription {
+  id       String @id @default(cuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id])
+  endpoint String @unique
+  p256dh   String
+  auth     String
+}
+
+model AlarmDelivered {
+  id          String   @id @default(cuid())
+  taskId      String
+  localDate   String
+  kind        String // "NOMINAL" | "SHIFTED"
+  deliveredAt DateTime @default(now())
+
+  @@unique([taskId, localDate, kind])
+}
+
+model AlarmQueued {
+  name      String @id // alarm-{taskId}-{localDate}-{epochMs}
+  taskId    String
+  localDate String
+  kind      String
+
+  @@index([taskId])
+}

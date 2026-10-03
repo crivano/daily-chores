@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Código gerado (Prisma 7 gera o client em src/generated):
+    "src/generated/**",
+    // Service worker gerado pelo Serwist no build:
+    "public/sw.js",
   ]),
 ]);
 
