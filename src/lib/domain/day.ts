@@ -12,7 +12,7 @@ export interface DayTaskDTO {
   completedAt: string | null; // ISO UTC
   completedAtLabel: string | null; // "HH:mm" no fuso do usuário
   timeLabel?: string; // "HH:mm" do horário efetivo (quando alarma)
-  shiftLabel?: string; // "+5 min" / "−10 min"
+  shiftLabel?: string; // "+0:05" / "−1:13"
   note?: string; // "após {âncora}"
 }
 

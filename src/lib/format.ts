@@ -19,14 +19,21 @@ export function recurrenceLabel(t: TaskSummaryInfo): string {
   return labels.join(", ") || "Sem dias";
 }
 
-/** "08:00 · relativa a Café" | "após Jantar · +20 min" | "sem hora" */
+/** "+1:13" / "−0:45" — offset em minutos como horas:minutos. */
+export function formatOffset(minutes: number): string {
+  const sign = minutes < 0 ? "−" : "+";
+  const abs = Math.abs(minutes);
+  return `${sign}${Math.floor(abs / 60)}:${String(abs % 60).padStart(2, "0")}`;
+}
+
+/** "08:00 · relativa a Café" | "após Jantar · +0:20" | "sem hora" */
 export function timeRuleLabel(t: TaskSummaryInfo, anchorName: string | null): string {
   if (t.time) {
     return anchorName ? `${t.time} · relativa a ${anchorName}` : t.time;
   }
   if (t.anchorId) {
     return anchorName
-      ? `após ${anchorName}${t.offsetMinutes ? ` · +${t.offsetMinutes} min` : ""}`
+      ? `após ${anchorName}${t.offsetMinutes ? ` · ${formatOffset(t.offsetMinutes)}` : ""}`
       : "após tarefa";
   }
   return "sem hora fixa";

@@ -60,6 +60,8 @@ function StateIcon({ state }: { state: TaskState }) {
 /**
  * Linha da lista do dia — controle rotativo de estado + nome + pills de
  * hora/shift + hora de conclusão editável (clique no pill abre o editor).
+ * Clique no pill do horário previsto de uma tarefa com registro (estado ≠
+ * "Não feito") grava esse horário como hora de conclusão.
  */
 export function TaskRow({ task, onSetState, onSetTime }: Props) {
   const [error, setError] = useState(false);
@@ -97,8 +99,21 @@ export function TaskRow({ task, onSetState, onSetTime }: Props) {
     else flashError();
   }
 
+  /** Clique no horário previsto: grava como hora de conclusão do registro. */
+  async function applyScheduledTime() {
+    if (!task.timeLabel || busy) return;
+    setError(false);
+    setBusy(true);
+    const ok = await onSetTime(task.timeLabel);
+    setBusy(false);
+    if (!ok) flashError();
+  }
+
   const conclusive = meta.conclusive;
-  const dimmed = task.state === "DONE" || task.state === "CANCELLED";
+  const dimmed = task.state !== "NONE";
+  // Conclusão no horário previsto: o pill índigo já mostra a hora,
+  // então o pill de conclusão vira só a caneta (evita hora duplicada).
+  const sameAsScheduled = task.completedAtLabel != null && task.completedAtLabel === task.timeLabel;
 
   return (
     <li className="relative">
@@ -174,13 +189,15 @@ export function TaskRow({ task, onSetState, onSetTime }: Props) {
                 }}
                 title="Ajustar hora de conclusão"
                 aria-label={`Concluída às ${task.completedAtLabel}. Ajustar hora`}
-                className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums transition active:scale-[0.98] ${
+                className={`flex items-center gap-1 rounded-full py-1 text-xs font-semibold tabular-nums transition active:scale-[0.98] ${
+                  sameAsScheduled ? "px-2" : "px-2.5"
+                } ${
                   conclusive
                     ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
                     : "bg-zinc-100 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300"
                 }`}
               >
-                {task.completedAtLabel}
+                {!sameAsScheduled && task.completedAtLabel}
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-3 w-3" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
                 </svg>
@@ -191,11 +208,27 @@ export function TaskRow({ task, onSetState, onSetTime }: Props) {
                 {task.shiftLabel}
               </span>
             )}
-            {task.timeLabel && (
-              <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 tabular-nums dark:bg-indigo-500/15 dark:text-indigo-300">
-                {task.timeLabel}
-              </span>
-            )}
+            {task.timeLabel &&
+              (task.state === "NONE" ? (
+                <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 tabular-nums dark:bg-indigo-500/15 dark:text-indigo-300">
+                  {task.timeLabel}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void applyScheduledTime();
+                  }}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  title={`Definir hora de conclusão como ${task.timeLabel}`}
+                  aria-label={`Definir hora de conclusão de ${task.name} como ${task.timeLabel}`}
+                  className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 tabular-nums transition active:scale-[0.98] disabled:opacity-50 dark:bg-indigo-500/15 dark:text-indigo-300"
+                >
+                  {task.timeLabel}
+                </button>
+              ))}
           </span>
         )}
       </div>

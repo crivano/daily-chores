@@ -28,6 +28,17 @@ const ITEMS = [
     ),
   },
   {
+    href: "/estatisticas",
+    label: "Estatísticas",
+    icon: (
+      // gráfico de colunas
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-5 w-5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 3v16a2 2 0 0 0 2 2h16" />
+        <path d="M18 17V9M13 17V5M8 17v-3" />
+      </svg>
+    ),
+  },
+  {
     href: "/configuracoes",
     label: "Ajustes",
     icon: (

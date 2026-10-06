@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { TaskDTO } from "@/lib/dto";
-import { WEEKDAY_LABELS, gapMinutes } from "@/lib/format";
+import { WEEKDAY_LABELS, formatOffset, gapMinutes } from "@/lib/format";
 
 interface Props {
   task: TaskDTO | null; // null = nova tarefa
@@ -69,7 +69,7 @@ export function TaskFormModal({ task, tasks, onClose }: Props) {
       ? gapMinutes(time, selectedAnchor.time)
       : null;
   const gapLabel =
-    gap == null ? null : gap === 0 ? "mesmo horário" : `${gap > 0 ? "+" : "−"}${Math.abs(gap)} min`;
+    gap == null ? null : gap === 0 ? "mesmo horário" : formatOffset(gap);
 
   function toggleWeekday(day: number) {
     setWeekdays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]));

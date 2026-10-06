@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { TaskDTO } from "@/lib/dto";
+import { compareTaskDTOs, type TaskDTO } from "@/lib/dto";
 import { recurrenceLabel, timeRuleLabel } from "@/lib/format";
 import { TaskFormModal } from "./TaskFormModal";
 
@@ -13,8 +13,8 @@ export function TasksManager({ tasks }: { tasks: TaskDTO[] }) {
   const [toast, setToast] = useState<string | null>(null);
 
   const byId = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
-  const active = tasks.filter((t) => t.active);
-  const inactive = tasks.filter((t) => !t.active);
+  const active = tasks.filter((t) => t.active).sort(compareTaskDTOs);
+  const inactive = tasks.filter((t) => !t.active).sort(compareTaskDTOs);
 
   function showToast(message: string) {
     setToast(message);

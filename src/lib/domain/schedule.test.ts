@@ -244,9 +244,10 @@ describe("alarmName", () => {
 });
 
 describe("formatShift", () => {
-  it("formata minutos com sinal (e vazio para zero)", () => {
-    expect(formatShift(5 * 60_000)).toBe("+5 min");
-    expect(formatShift(-10 * 60_000)).toBe("−10 min");
+  it("formata horas:minutos com sinal (e vazio para zero)", () => {
+    expect(formatShift(5 * 60_000)).toBe("+0:05");
+    expect(formatShift(73 * 60_000)).toBe("+1:13");
+    expect(formatShift(-10 * 60_000)).toBe("−0:10");
     expect(formatShift(0)).toBe("");
   });
 });

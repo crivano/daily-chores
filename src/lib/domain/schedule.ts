@@ -12,6 +12,7 @@
  */
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 
+import { formatOffset } from "../format";
 import { isConclusive } from "./states";
 
 export const DEFAULT_TZ = "America/Sao_Paulo";
@@ -194,9 +195,9 @@ export function alarmName(taskId: string, localDate: string, at: Date): string {
   return `alarm-${taskId}-${localDate}-${at.getTime()}`;
 }
 
-/** Pill de deslocamento: "+5 min" / "−10 min" (sinal menos U+2212). Vazio se 0. */
+/** Pill de deslocamento: "+0:05" / "−1:13" (sinal menos U+2212). Vazio se 0. */
 export function formatShift(shiftMs: number): string {
   const mins = Math.round(shiftMs / MS_PER_MINUTE);
   if (mins === 0) return "";
-  return `${mins > 0 ? "+" : "−"}${Math.abs(mins)} min`;
+  return formatOffset(mins);
 }
