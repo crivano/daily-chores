@@ -14,9 +14,10 @@ export interface AlarmInfo {
  * Ilha responsável pelos alarmes na aba em foco:
  * 1. setTimeout para cada alarme pendente de hoje (horário efetivo);
  * 2. mensagens do Service Worker (push recebido com a aba aberta);
- * 3. refresh a cada 30s para virada de dia e mudanças de shift.
+ * 3. tick a cada 30s (onTick recarrega o payload do dia; fallback router.refresh)
+ *    para virada de dia e mudanças de shift.
  */
-export function AlarmListener({ alarms }: { alarms: AlarmInfo[] }) {
+export function AlarmListener({ alarms, onTick }: { alarms: AlarmInfo[]; onTick?: () => void }) {
   const router = useRouter();
   const [active, setActive] = useState<{ taskId: string; name: string } | null>(null);
   const activeRef = useRef(false);
@@ -46,14 +47,15 @@ export function AlarmListener({ alarms }: { alarms: AlarmInfo[] }) {
     };
     navigator.serviceWorker?.addEventListener("message", onMessage);
 
-    const refresh = setInterval(() => router.refresh(), 30_000);
+    const tick = onTick ?? (() => router.refresh());
+    const tickTimer = setInterval(tick, 30_000);
 
     return () => {
       timers.forEach(clearTimeout);
-      clearInterval(refresh);
+      clearInterval(tickTimer);
       navigator.serviceWorker?.removeEventListener("message", onMessage);
     };
-  }, [alarms, router]);
+  }, [alarms, onTick, router]);
 
   if (!active) return null;
   return (

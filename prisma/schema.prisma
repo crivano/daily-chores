@@ -45,7 +45,8 @@ model Completion {
   task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
   userId      String
   localDate   String // "YYYY-MM-DD" no fuso do usuário
-  completedAt DateTime // timestamp real do clique (UTC)
+  completedAt DateTime // timestamp real do registro (UTC); editável pelo usuário
+  status      String   @default("DONE") // "DONE" | "CANCELLED" | "HAPPY" | "INDIFFERENT" | "SAD"
 
   @@unique([taskId, localDate])
   @@index([userId, localDate])

@@ -1,14 +1,18 @@
 /**
  * Domínio de agendamento — funções PURAS, única fonte de verdade.
- * Usado pela UI (Server Components), pelo disparador de alarmes (/api/internal/alarm)
+ * Usado pela UI (client + server), pelo disparador de alarmes (/api/internal/alarm)
  * e pela reconciliação (/api/internal/reconcile).
  *
  * Convenções:
  * - D = data local "YYYY-MM-DD" no fuso do usuário (tz IANA).
  * - `time` = "HH:mm". Timestamps são Date UTC.
  * - Toda conversão local↔UTC usa date-fns-tz (DST-correct).
+ * - Cadeias: apenas conclusões CONCLUSIVAS (ver domain/states) deslocam as
+ *   tarefas encadeadas; âncora cancelada ou pendente → horário nominal.
  */
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
+
+import { isConclusive } from "./states";
 
 export const DEFAULT_TZ = "America/Sao_Paulo";
 
@@ -29,7 +33,8 @@ export interface TaskLike {
 export interface CompletionLike {
   taskId: string;
   localDate: string;
-  completedAt: Date; // timestamp real do clique (UTC)
+  completedAt: Date; // timestamp real do clique/registro (UTC)
+  status: string; // "DONE" | "CANCELLED" | "HAPPY" | "INDIFFERENT" | "SAD"
 }
 
 export type TasksById = Map<string, TaskLike>;
@@ -47,6 +52,14 @@ export function parseLocalDate(D: string): { y: number; m: number; d: number } {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(D);
   if (!m) throw new Error(`Data local inválida: ${D}`);
   return { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) };
+}
+
+/** "YYYY-MM-DD" bem formada E com dia/mês reais (2026-13-45 não passa). */
+export function isValidLocalDate(D: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(D)) return false;
+  const { y, m, d } = parseLocalDate(D);
+  const roundtrip = toLocalDate(new Date(Date.UTC(y, m - 1, d)));
+  return roundtrip === D;
 }
 
 function utcOf(D: string): Date {
@@ -100,9 +113,9 @@ export function nominal(task: TaskLike, D: string, tz: string): Date | undefined
 /**
  * Deslocamento (ms) da tarefa em D:
  * - 0 se sem âncora.
- * - Se a âncora A tem Completion em D: completedAt(A) − nominal(A, D)
+ * - Se a âncora A tem Completion CONCLUSIVA em D: completedAt(A) − nominal(A, D)
  *   (positivo = atraso, negativo = adiantamento; herda recursivamente).
- * - Âncora com horário pendente → shift da própria âncora (cadeia).
+ * - Âncora pendente ou cancelada → shift da própria âncora (cadeia).
  */
 export function shiftOf(
   task: TaskLike,
@@ -117,7 +130,7 @@ export function shiftOf(
   if (!anchor) return 0;
   const done = completions.get(anchor.id);
   const nomAnchor = nominal(anchor, D, tz);
-  if (done && nomAnchor) {
+  if (done && isConclusive(done.status) && nomAnchor) {
     return done.completedAt.getTime() - nomAnchor.getTime();
   }
   return shiftOf(anchor, D, tz, completions, tasksById, depth + 1);
@@ -126,11 +139,12 @@ export function shiftOf(
 /**
  * Horário efetivo (instante UTC do alarme) ou undefined se a tarefa não alarma:
  * (a) sem âncora, com hora → nominal;
- * (b) com hora, âncora concluída → nominal(task) + (completedAt(A) − nominal(A))
+ * (b) com hora, âncora conclusiva → nominal(task) + (completedAt(A) − nominal(A))
  *     [equivale a completedAt(A) + gap nominal];
- * (c) com hora, âncora pendente → nominal(task) + shift(A) (provisório; a UI exibe);
- * (d) sem hora, âncora concluída → completedAt(A) + offsetMinutes;
- * (e) sem hora, âncora pendente → undefined (não alarma; UI mostra "após {âncora}").
+ * (c) com hora, âncora pendente/cancelada → nominal(task) + shift(A) (provisório);
+ * (d) sem hora, âncora conclusiva → completedAt(A) + offsetMinutes;
+ * (e) sem hora, âncora pendente/cancelada → undefined (não alarma; UI mostra
+ *     "após {âncora}").
  * Tarefa sem hora e sem âncora → undefined (nunca alarma).
  */
 export function effectiveAt(
@@ -145,7 +159,7 @@ export function effectiveAt(
   }
   const anchor = tasksById.get(task.anchorId);
   if (!anchor) {
-    // Âncora não encontrada ( excluída/de outro usuário): degrada para o nominal.
+    // Âncora não encontrada (excluída/de outro usuário): degrada para o nominal.
     return task.time ? nominal(task, D, tz) : undefined;
   }
   if (task.time) {
@@ -154,7 +168,7 @@ export function effectiveAt(
     return new Date(nom.getTime() + shiftOf(task, D, tz, completions, tasksById));
   }
   const done = completions.get(anchor.id);
-  if (!done) return undefined;
+  if (!done || !isConclusive(done.status)) return undefined;
   return new Date(done.completedAt.getTime() + (task.offsetMinutes ?? 0) * MS_PER_MINUTE);
 }
 

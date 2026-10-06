@@ -7,6 +7,7 @@ import {
   due,
   effectiveAt,
   formatShift,
+  isValidLocalDate,
   nextOccurrence,
   nominal,
   shiftOf,
@@ -32,9 +33,14 @@ function task(p: Partial<TaskLike> & Pick<TaskLike, "id">): TaskLike {
   };
 }
 
-/** Conclusão da tarefa `taskId` na data D, clicada às `hhmm` locais. */
+/** Conclusão CONCLUSIVA da tarefa `taskId` na data D, registrada às `hhmm` locais. */
 function done(taskId: string, day: string, hhmm: string): CompletionLike {
-  return { taskId, localDate: day, completedAt: fromZonedTime(`${day}T${hhmm}:00`, TZ) };
+  return marked(taskId, day, hhmm, "DONE");
+}
+
+/** Registro da tarefa `taskId` na data D com status arbitrário. */
+function marked(taskId: string, day: string, hhmm: string, status: string): CompletionLike {
+  return { taskId, localDate: day, completedAt: fromZonedTime(`${day}T${hhmm}:00`, TZ), status };
 }
 
 /** Instante UTC correspondente a hhmm locais em D. */
@@ -149,6 +155,25 @@ describe("effectiveAt", () => {
     expect(shiftOf(B, D, TZ, comps, tasks)).toBe(-30 * 60_000);
     expect(effectiveAt(B, D, TZ, comps, tasks)?.getTime()).toBe(at("08:00"));
   });
+
+  it("humores são conclusivos: deslocam a cadeia como DONE", () => {
+    const comps = compsOf(marked("a", D, "08:05", "HAPPY"));
+    expect(effectiveAt(B, D, TZ, comps, tasks)?.getTime()).toBe(at("08:35"));
+    const noTime = task({ id: "n", anchorId: "a", offsetMinutes: 20 });
+    expect(effectiveAt(noTime, D, TZ, comps, tasksOf(A, noTime))?.getTime()).toBe(at("08:25"));
+  });
+
+  it("âncora CANCELADA não desloca a cadeia (dependente fica no nominal)", () => {
+    const comps = compsOf(marked("a", D, "09:30", "CANCELLED"));
+    expect(shiftOf(B, D, TZ, comps, tasks)).toBe(0);
+    expect(effectiveAt(B, D, TZ, comps, tasks)?.getTime()).toBe(at("08:30"));
+  });
+
+  it("sem hora com âncora CANCELADA → undefined (igual âncora pendente)", () => {
+    const noTime = task({ id: "n", anchorId: "a", offsetMinutes: 20 });
+    const comps = compsOf(marked("a", D, "09:30", "CANCELLED"));
+    expect(effectiveAt(noTime, D, TZ, comps, tasksOf(A, noTime))).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -184,6 +209,23 @@ describe("addDays / dateInTZ", () => {
     const dt = new Date("2026-10-01T23:30:00Z");
     expect(dateInTZ(dt, "America/Sao_Paulo")).toBe("2026-10-01");
     expect(dateInTZ(dt, "Asia/Tokyo")).toBe("2026-10-02");
+  });
+});
+
+describe("isValidLocalDate", () => {
+  it("aceita datas reais no formato YYYY-MM-DD", () => {
+    expect(isValidLocalDate("2026-10-01")).toBe(true);
+    expect(isValidLocalDate("2024-02-29")).toBe(true); // ano bissexto
+  });
+
+  it("rejeita formato inválido e datas inexistentes", () => {
+    expect(isValidLocalDate("2026-10-1")).toBe(false);
+    expect(isValidLocalDate("2026/10/01")).toBe(false);
+    expect(isValidLocalDate("")).toBe(false);
+    expect(isValidLocalDate("2026-13-01")).toBe(false); // mês 13
+    expect(isValidLocalDate("2026-00-10")).toBe(false); // mês 0
+    expect(isValidLocalDate("2026-04-31")).toBe(false); // abril não tem 31
+    expect(isValidLocalDate("2023-02-29")).toBe(false); // não bissexto
   });
 });
 

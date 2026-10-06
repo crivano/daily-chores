@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+
+import { notifyDayChanged } from "@/lib/clientEvents";
 
 /**
  * Envia o fuso do navegador no 1º carregamento pós-login; o server grava se
  * ainda null (edge 15: sem isso o app usa America/Sao_Paulo com aviso na UI).
  */
 export function TimezoneSender() {
-  const router = useRouter();
   useEffect(() => {
     try {
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -21,12 +21,13 @@ export function TimezoneSender() {
       })
         .then((res) => (res.ok ? res.json() : null))
         .then((data: { updated?: boolean } | null) => {
-          if (data?.updated) router.refresh();
+          // Fuso novo pode mudar o "hoje" e todos os horários → recarrega o dia.
+          if (data?.updated) notifyDayChanged();
         })
         .catch(() => {});
     } catch {
       // Intl indisponível — server manterá o fuso padrão.
     }
-  }, [router]);
+  }, []);
   return null;
 }

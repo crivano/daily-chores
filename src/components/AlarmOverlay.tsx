@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+
+import { notifyDayChanged } from "@/lib/clientEvents";
 
 const SOUND_URL = "/sounds/alarm.wav";
 
@@ -15,7 +16,6 @@ export function AlarmOverlay({
   name: string;
   onDismiss: () => void;
 }) {
-  const router = useRouter();
   const [clock, setClock] = useState(() => new Date());
   const [busy, setBusy] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -41,9 +41,9 @@ export function AlarmOverlay({
       await fetch("/api/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskId, done: true }),
+        body: JSON.stringify({ taskId, status: "DONE" }),
       });
-      router.refresh();
+      notifyDayChanged();
     } catch {
       // mantém o overlay; o usuário pode tentar de novo
     } finally {
