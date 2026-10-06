@@ -49,6 +49,7 @@ export function conclusivesOf(counts: StatusCounts): number {
 export interface StatsTask {
   taskId: string;
   name: string;
+  time: string | null; // "HH:mm" fixo (null = sem hora) — chave da ordenação
   counts: StatusCounts;
   marked: number; // marcações no intervalo (inclui dias não previstos)
   due: number; // vezes devida no intervalo, ignora `active`
@@ -80,7 +81,7 @@ export interface StatsPayload {
   totals: StatusCounts;
   totalDue: number;
   conclusionRate: number; // conclusivos/totalDue (0..1; 0 se totalDue = 0)
-  tasks: StatsTask[]; // ordenado por marked desc → nome
+  tasks: StatsTask[]; // sem hora primeiro → hora crescente → nome (pt-BR)
   buckets: StatsBucket[];
 }
 
@@ -274,13 +275,17 @@ export function buildStatsPayload(
     .map((r) => ({
       taskId: r.task.id,
       name: r.task.name,
+      time: r.task.time,
       counts: r.counts,
       marked: r.marked,
       due: r.due,
       missed: Math.max(0, r.due - r.marked),
       conclusionRate: r.due > 0 ? Math.min(1, conclusivesOf(r.counts) / r.due) : 0,
     }))
-    .sort((a, b) => b.marked - a.marked || a.name.localeCompare(b.name, "pt-BR"));
+    .sort(
+      (a, b) =>
+        (a.time ?? "").localeCompare(b.time ?? "") || a.name.localeCompare(b.name, "pt-BR"),
+    );
 
   return {
     from,

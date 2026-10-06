@@ -147,11 +147,30 @@ describe("buildStatsPayload", () => {
     expect(p.tasks[0].counts.DONE).toBe(1);
   });
 
-  it("ordena por marcadas desc e desempata por nome", () => {
-    const tasks = [task("B"), task("a"), task("C")];
-    const completions = [mark("a", "2026-09-06"), mark("C", "2026-09-07"), mark("C", "2026-09-08")];
+  it("ordena por horário (sem hora primeiro), desempata por nome; marked não influencia", () => {
+    const tasks = [
+      task("janta", { time: "20:00" }),
+      task("zen", { time: null }),
+      task("almoco", { time: "12:00" }),
+      task("arco", { time: null }),
+      task("cafe", { time: "08:00" }),
+      task("cafe2", { time: "08:00" }),
+    ];
+    // janta tem 3 marcações e ainda assim fica por último (hora maior).
+    const completions = [
+      mark("janta", "2026-09-06"),
+      mark("janta", "2026-09-07"),
+      mark("janta", "2026-09-08"),
+    ];
     const p = buildStatsPayload(tasks, completions, WEEK.from, WEEK.to, TODAY);
-    expect(p.tasks.map((t) => t.taskId)).toEqual(["C", "a", "B"]);
+    expect(p.tasks.map((t) => t.taskId)).toEqual([
+      "arco",
+      "zen",
+      "cafe",
+      "cafe2",
+      "almoco",
+      "janta",
+    ]);
   });
 
   it("exclui tarefas sem ocorrência e sem marcação no intervalo", () => {

@@ -24,7 +24,14 @@ export function TaskStatBars({ tasks }: { tasks: StatsTask[] }) {
         return (
           <li key={t.taskId}>
             <div className="mb-1 flex items-baseline justify-between gap-2">
-              <span className="truncate text-sm font-medium">{t.name}</span>
+              <span className="flex min-w-0 items-baseline gap-1.5 text-sm font-medium">
+                {t.time && (
+                  <span className="shrink-0 text-xs font-semibold text-zinc-400 tabular-nums dark:text-zinc-500">
+                    {t.time}
+                  </span>
+                )}
+                <span className="truncate">{t.name}</span>
+              </span>
               <span className="shrink-0 text-xs text-zinc-500 tabular-nums dark:text-zinc-400">
                 {t.marked} · {Math.round(t.conclusionRate * 100)}%
               </span>
