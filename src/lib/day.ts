@@ -21,6 +21,7 @@ import {
   type TasksById,
 } from "./domain/schedule";
 import { isConclusive, isTaskState, type TaskState } from "./domain/states";
+import { compareTasksByTimeName } from "./dto";
 import { prisma } from "./prisma";
 
 function stateOf(taskId: string, complByTask: CompletionsByTask): TaskState {
@@ -68,11 +69,14 @@ export async function getDayPayload(userId: string, requested?: string | null): 
 
   const timed = dueTasks
     .filter((t) => t.time)
-    .map((t) => {
-      const eff = effectiveAt(t, D, tz, complByTask, tasksById)!;
-      return { task: t, eff, sort: eff.getTime() };
-    })
-    .sort((a, b) => a.sort - b.sort)
+    .map((t) => ({
+      task: t,
+      eff: effectiveAt(t, D, tz, complByTask, tasksById)!,
+    }))
+    // Ordem = hora nominal → nome (comparador canônico, idem /tarefas): pura dos
+    // campos da tarefa. O horário efetivo (com shift de cadeia) segue no
+    // timeLabel — concluir a âncora muda o rótulo da dependente, nunca a posição.
+    .sort((a, b) => compareTasksByTimeName(a.task, b.task))
     .map(({ task, eff }) =>
       toDTO(task, eff, task.anchorId ? shiftOf(task, D, tz, complByTask, tasksById) : 0),
     );
@@ -85,12 +89,15 @@ export async function getDayPayload(userId: string, requested?: string | null): 
       const anchorCompletion = t.anchorId ? complByTask.get(t.anchorId) : undefined;
       const anchorConclusive = anchorCompletion ? isConclusive(anchorCompletion.status) : false;
       return {
-        sort: eff?.getTime() ?? Infinity,
-        dto: toDTO(t, eff, undefined, anchor && !anchorConclusive ? `após ${anchor.name}` : undefined),
+        task: t,
+        eff,
+        note: anchor && !anchorConclusive ? `após ${anchor.name}` : undefined,
       };
     })
-    .sort((a, b) => a.sort - b.sort)
-    .map((x) => x.dto);
+    // Mesma ordem canônica (aqui reduz a A→Z): a posição não depende de a âncora
+    // estar concluída — só o rótulo muda ("após X" vira a hora efetiva).
+    .sort((a, b) => compareTasksByTimeName(a.task, b.task))
+    .map(({ task, eff, note }) => toDTO(task, eff, undefined, note));
 
   // Qualquer registro suprime o alarme (conclusivos concluem; CANCELADO silencia).
   const alarms =

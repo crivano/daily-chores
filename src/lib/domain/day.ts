@@ -33,8 +33,8 @@ export interface DayPayload {
   concluded: number; // estados conclusivos
   cancelled: number; // status CANCELLED
   tasks: {
-    timed: DayTaskDTO[]; // com hora fixa (ordenadas por horário efetivo)
-    timeless: DayTaskDTO[]; // sem hora fixa
+    timed: DayTaskDTO[]; // com hora fixa — ordem canônica (hora nominal → nome)
+    timeless: DayTaskDTO[]; // sem hora fixa — ordem canônica (A→Z)
   };
   alarms: DayAlarmInfo[]; // apenas quando today (alarmes ainda pendentes)
 }

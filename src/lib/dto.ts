@@ -31,10 +31,15 @@ export function taskToDTO(task: Task, dependents: { id: string; name: string }[]
 }
 
 /**
- * Ordem da lista de configuração: tarefas sem hora fixa primeiro (A→Z pelo
- * nome), depois as com hora fixa em ordem cronológica (empate → A→Z).
+ * Ordem canônica das listas de tarefas (configuração e dia): função PURA dos
+ * campos da tarefa — hora fixa em ordem cronológica (empate → A→Z pt-BR),
+ * sem hora antes das com hora (entre si, A→Z). Completions NUNCA entram aqui:
+ * concluir/cancelar muda rótulos (hora efetiva, shift), nunca a posição na lista.
  */
-export function compareTaskDTOs(a: TaskDTO, b: TaskDTO): number {
+export function compareTasksByTimeName(
+  a: { time: string | null; name: string },
+  b: { time: string | null; name: string },
+): number {
   const am = timeToMinutes(a.time);
   const bm = timeToMinutes(b.time);
   if (am == null || bm == null) {
@@ -42,6 +47,12 @@ export function compareTaskDTOs(a: TaskDTO, b: TaskDTO): number {
     return a.name.localeCompare(b.name, "pt-BR");
   }
   return am - bm || a.name.localeCompare(b.name, "pt-BR");
+}
+
+/** Ordem da lista de configuração: tarefas sem hora fixa primeiro, depois as
+ *  com hora fixa em ordem cronológica — via comparador canônico compartilhado. */
+export function compareTaskDTOs(a: TaskDTO, b: TaskDTO): number {
+  return compareTasksByTimeName(a, b);
 }
 
 /** Constrói os DTOs com a lista de dependentes de cada tarefa. */

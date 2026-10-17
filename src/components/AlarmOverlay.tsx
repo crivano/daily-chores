@@ -57,6 +57,7 @@ export function AlarmOverlay({
   return (
     <div
       role="alert"
+      data-pull-ignore
       className="fixed inset-0 z-100 flex flex-col items-center justify-center gap-8 bg-indigo-600 px-6 text-white"
     >
       <p className="text-xs font-semibold uppercase tracking-[0.3em] text-indigo-200">Alarme</p>

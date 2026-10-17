@@ -25,6 +25,9 @@ function todayBrowserTz(): string {
 /** Debounce da persistência de estado por tarefa (ms). */
 const STATE_DEBOUNCE_MS = 500;
 
+/** Arrasto para baixo (px) que dispara a recarga no puxar-para-baixo. */
+const PULL_REFRESH_THRESHOLD = 90;
+
 /** Burst de mudanças de estado de uma tarefa esperando o debounce. */
 interface PendingState {
   timer: ReturnType<typeof setTimeout> | null; // null = nada agendado
@@ -76,6 +79,10 @@ function mergePendingStates(day: DayPayload, pending: Map<string, PendingState>)
  * debounced (STATE_DEBOUNCE_MS por tarefa — toques em sequência viram um único
  * POST com o estado final). A resposta traz o payload completo do dia (shifts
  * em cadeia inclusos).
+ *
+ * Sem polling: o payload é (re)carregado apenas ao abrir/voltar para a página,
+ * ao trocar de data, quando outra ilha muta o dia (evento global) e no gesto
+ * de puxar-para-baixo (celular), que força a recarga.
  */
 export function DayBoard({ userId }: { userId: string }) {
   // ?d= resolvido no inicializador (SSR não tem window → hoje). O primeiro
@@ -194,7 +201,8 @@ export function DayBoard({ userId }: { userId: string }) {
 
   /**
    * Busca o payload do dia. `fromCache` pinta o cache imediatamente antes do
-   * fetch (troca de data); polling/tick não usa para não regredir o estado vivo.
+   * fetch (troca de data); revalidações (volta à aba, evento, pull) não usam
+   * para não regredir o estado vivo.
    */
   const load = useCallback(
     async (target: string | null, opts?: { fromCache?: boolean }) => {
@@ -241,14 +249,8 @@ export function DayBoard({ userId }: { userId: string }) {
     load(viewDRef.current);
   }, [load]);
 
-  // Polling de 30s apenas no dia de hoje (virada de dia, shifts de cadeia).
-  useEffect(() => {
-    if (viewD !== null) return;
-    const iv = setInterval(handleTick, 30_000);
-    return () => clearInterval(iv);
-  }, [viewD, handleTick]);
-
-  // Revalida ao voltar para a aba e quando outra ilha muta o dia.
+  // Revalida ao (re)abrir a página — no celular, voltar para a aba/app É abrir
+  // a página — e quando outra ilha muta o dia (AlarmOverlay, TimezoneSender).
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState === "visible") handleTick();
@@ -260,6 +262,131 @@ export function DayBoard({ userId }: { userId: string }) {
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [handleTick]);
+
+  // ---- Puxar-para-baixo (celular): recarga manual, no lugar do polling -----
+  // O indicador é pintado direto no DOM (refs) para não re-renderizar a lista
+  // a cada touchmove; `refreshing` vive em ref porque os listeners são do window.
+
+  const pullBoxRef = useRef<HTMLDivElement>(null);
+  const pullArrowRef = useRef<SVGSVGElement>(null);
+  const pullSpinRef = useRef<SVGSVGElement>(null);
+  const refreshingRef = useRef(false);
+
+  /** Posiciona o indicador: dy≤0 esconde; `spin` troca a seta pelo spinner. */
+  const paintPull = useCallback((dy: number, spin: boolean) => {
+    const box = pullBoxRef.current;
+    const arrow = pullArrowRef.current;
+    const spinner = pullSpinRef.current;
+    if (!box || !arrow || !spinner) return;
+    const shown = Math.min(72, Math.max(0, dy)); // teto do elástico
+    box.style.transform = `translate(-50%, ${shown - 56}px)`;
+    box.style.opacity = shown > 0 ? "1" : "0";
+    arrow.style.display = spin ? "none" : "block";
+    spinner.style.display = spin ? "block" : "none";
+  }, []);
+
+  /** Recarga do gesto: segura o spinner no topo até a resposta chegar. */
+  const triggerRefresh = useCallback(async () => {
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
+    paintPull(48, true);
+    try {
+      await load(viewDRef.current);
+    } finally {
+      refreshingRef.current = false;
+      paintPull(0, false);
+    }
+  }, [load, paintPull]);
+
+  useEffect(() => {
+    let touchId = -1;
+    let startX = 0;
+    let startY = 0;
+    let lastDy = 0;
+    let engaged = false;
+
+    const touchById = (touches: TouchList) => {
+      for (let i = 0; i < touches.length; i += 1) {
+        if (touches[i].identifier === touchId) return touches[i];
+      }
+      return null;
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      engaged = false;
+      lastDy = 0;
+      // Só engata no topo da página, com um dedo, fora dos overlays fixos
+      // (alarme, bottom nav — data-pull-ignore) e sem recarga em andamento.
+      if (
+        e.touches.length !== 1 ||
+        refreshingRef.current ||
+        window.scrollY > 0 ||
+        !dayRef.current ||
+        (e.target as Element | null)?.closest?.("[data-pull-ignore]")
+      ) {
+        touchId = -1;
+        return;
+      }
+      touchId = e.touches[0].identifier;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (touchId < 0 || refreshingRef.current) return;
+      const t = touchById(e.touches);
+      if (!t) return;
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      if (!engaged) {
+        // Descendo e mais vertical que horizontal = pull; subiu ou foi para o
+        // lado = scroll/swipe comum, devolve o gesto ao navegador.
+        if (dy > 8 && dy >= Math.abs(dx)) engaged = true;
+        else if (dy < -8 || Math.abs(dx) > 8) touchId = -1;
+        if (!engaged) return;
+      }
+      if (dy <= 0) {
+        // Voltou acima do ponto de partida: encerra e devolve ao scroll.
+        engaged = false;
+        paintPull(0, false);
+        return;
+      }
+      // Listener não-passivo: impede o pull-to-refresh nativo (que recarregaria
+      // a página inteira) e o rubber-band do iOS — a recarga é nossa, em dados.
+      e.preventDefault();
+      lastDy = dy;
+      paintPull(dy * 0.5, false); // resistência elástica
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (touchId < 0) return;
+      const ended = touchById(e.changedTouches) !== null;
+      const wasEngaged = engaged;
+      const dy = lastDy;
+      touchId = -1;
+      engaged = false;
+      if (!ended || !wasEngaged) return;
+      if (dy >= PULL_REFRESH_THRESHOLD) void triggerRefresh();
+      else paintPull(0, false);
+    };
+
+    const onTouchCancel = () => {
+      touchId = -1;
+      engaged = false;
+      if (!refreshingRef.current) paintPull(0, false);
+    };
+
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchmove", onTouchMove, { passive: false });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    window.addEventListener("touchcancel", onTouchCancel, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("touchcancel", onTouchCancel);
+    };
+  }, [triggerRefresh, paintPull]);
 
   /** Navega ±1 dia; ▶ desabilita em "hoje". URL acompanha sem round-trip.
    *  Só muda o estado — o effect de [viewD] lê o cache e dispara o fetch. */
@@ -379,8 +506,45 @@ export function DayBoard({ userId }: { userId: string }) {
 
   const isPast = day.date < day.todayDate;
 
+  // Indicador do puxar-para-baixo: posição/estado são pintados via refs no
+  // efeito do gesto (dayRef guarda o payload; aqui só o markup fixo no topo).
+  const pullIndicator = (
+    <div
+      ref={pullBoxRef}
+      aria-hidden
+      className="pointer-events-none fixed left-1/2 top-0 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-md dark:bg-zinc-800"
+      style={{ transform: "translate(-50%, -56px)", opacity: 0 }}
+    >
+      <svg
+        ref={pullArrowRef}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2.5}
+        className="h-5 w-5 text-zinc-500 dark:text-zinc-400"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M12 5v14m0 0 5-5m-5 5-5-5" />
+      </svg>
+      <svg
+        ref={pullSpinRef}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2.5}
+        className="h-5 w-5 animate-spin text-indigo-600 dark:text-indigo-400"
+        strokeLinecap="round"
+        style={{ display: "none" }}
+      >
+        <path d="M21 12a9 9 0 1 1-9-9" />
+      </svg>
+    </div>
+  );
+
   return (
     <>
+      {pullIndicator}
       <header className="mb-6 flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1">
@@ -490,7 +654,7 @@ export function DayBoard({ userId }: { userId: string }) {
         </>
       )}
 
-      {day.today && <AlarmListener alarms={day.alarms} onTick={handleTick} />}
+      {day.today && <AlarmListener alarms={day.alarms} />}
     </>
   );
 }

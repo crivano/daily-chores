@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { AlarmOverlay } from "./AlarmOverlay";
 
 export interface AlarmInfo {
@@ -13,12 +12,11 @@ export interface AlarmInfo {
 /**
  * Ilha responsável pelos alarmes na aba em foco:
  * 1. setTimeout para cada alarme pendente de hoje (horário efetivo);
- * 2. mensagens do Service Worker (push recebido com a aba aberta);
- * 3. tick a cada 30s (onTick recarrega o payload do dia; fallback router.refresh)
- *    para virada de dia e mudanças de shift.
+ * 2. mensagens do Service Worker (push recebido com a aba aberta).
+ * Sem polling: o payload do dia só é recarregado ao (re)abrir a página, no
+ * puxar-para-baixo (DayBoard) e via evento global após mutações.
  */
-export function AlarmListener({ alarms, onTick }: { alarms: AlarmInfo[]; onTick?: () => void }) {
-  const router = useRouter();
+export function AlarmListener({ alarms }: { alarms: AlarmInfo[] }) {
   const [active, setActive] = useState<{ taskId: string; name: string } | null>(null);
   const activeRef = useRef(false);
 
@@ -47,15 +45,11 @@ export function AlarmListener({ alarms, onTick }: { alarms: AlarmInfo[]; onTick?
     };
     navigator.serviceWorker?.addEventListener("message", onMessage);
 
-    const tick = onTick ?? (() => router.refresh());
-    const tickTimer = setInterval(tick, 30_000);
-
     return () => {
       timers.forEach(clearTimeout);
-      clearInterval(tickTimer);
       navigator.serviceWorker?.removeEventListener("message", onMessage);
     };
-  }, [alarms, onTick, router]);
+  }, [alarms]);
 
   if (!active) return null;
   return (
