@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
-import { AlarmListener } from "./AlarmListener";
 import { ProgressRing } from "./ProgressRing";
 import { TaskRow } from "./TaskRow";
 import { DAY_CHANGED_EVENT } from "@/lib/clientEvents";
@@ -81,8 +80,9 @@ function mergePendingStates(day: DayPayload, pending: Map<string, PendingState>)
  * em cadeia inclusos).
  *
  * Sem polling: o payload é (re)carregado apenas ao abrir/voltar para a página,
- * ao trocar de data, quando outra ilha muta o dia (evento global) e no gesto
- * de puxar-para-baixo (celular), que força a recarga.
+ * ao trocar de data, quando outra ilha muta o dia (evento global), quando um
+ * push chega com a aba aberta e no gesto de puxar-para-baixo (celular), que
+ * força a recarga.
  */
 export function DayBoard({ userId }: { userId: string }) {
   // ?d= resolvido no inicializador (SSR não tem window → hoje). O primeiro
@@ -250,16 +250,22 @@ export function DayBoard({ userId }: { userId: string }) {
   }, [load]);
 
   // Revalida ao (re)abrir a página — no celular, voltar para a aba/app É abrir
-  // a página — e quando outra ilha muta o dia (AlarmOverlay, TimezoneSender).
+  // a página — e quando outra ilha muta o dia (TimezoneSender) ou um push
+  // chega com a aba aberta (o SW avisa via postMessage e mostra a notificação).
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState === "visible") handleTick();
     };
+    const onSwMessage = (event: MessageEvent) => {
+      if ((event.data as { type?: string } | null)?.type === "PUSH_RECEIVED") handleTick();
+    };
     window.addEventListener(DAY_CHANGED_EVENT, handleTick);
     document.addEventListener("visibilitychange", onVisible);
+    navigator.serviceWorker?.addEventListener("message", onSwMessage);
     return () => {
       window.removeEventListener(DAY_CHANGED_EVENT, handleTick);
       document.removeEventListener("visibilitychange", onVisible);
+      navigator.serviceWorker?.removeEventListener("message", onSwMessage);
     };
   }, [handleTick]);
 
@@ -316,7 +322,7 @@ export function DayBoard({ userId }: { userId: string }) {
       engaged = false;
       lastDy = 0;
       // Só engata no topo da página, com um dedo, fora dos overlays fixos
-      // (alarme, bottom nav — data-pull-ignore) e sem recarga em andamento.
+      // (bottom nav — data-pull-ignore) e sem recarga em andamento.
       if (
         e.touches.length !== 1 ||
         refreshingRef.current ||
@@ -653,8 +659,6 @@ export function DayBoard({ userId }: { userId: string }) {
           )}
         </>
       )}
-
-      {day.today && <AlarmListener alarms={day.alarms} />}
     </>
   );
 }

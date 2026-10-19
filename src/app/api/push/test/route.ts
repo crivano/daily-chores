@@ -9,7 +9,7 @@ export async function POST() {
   const result = await sendPushToUser(userId, {
     taskId: "test",
     title: "Daily Chores",
-    body: "Este é um alarme de teste 🔔",
+    body: "Esta é uma notificação de teste 🔔",
     tag: "test-push",
   });
   if (result.skipped) {

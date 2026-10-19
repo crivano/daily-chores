@@ -58,10 +58,12 @@ function StateIcon({ state }: { state: TaskState }) {
 }
 
 /**
- * Linha da lista do dia — controle rotativo de estado + nome + pills de
- * hora/shift + hora de conclusão editável (clique no pill abre o editor).
- * Clique no pill do horário previsto de uma tarefa com registro (estado ≠
- * "Não feito") grava esse horário como hora de conclusão.
+ * Linha da lista do dia — controle rotativo de estado + nome + UM horário no
+ * fim da linha: o previsto (pendente, índigo) ou o executado (com registro,
+ * verde/cinza). A caneta à esquerda do horário abre o editor; nele, o botão de
+ * relógio aplica o horário previsto como hora de conclusão. Como a caneta tem
+ * largura fixa e fica sempre à esquerda, os horários ficam alinhados no fim
+ * das linhas.
  */
 export function TaskRow({ task, onSetState, onSetTime }: Props) {
   const [error, setError] = useState(false);
@@ -72,6 +74,11 @@ export function TaskRow({ task, onSetState, onSetTime }: Props) {
   const meta = STATE_META[task.state];
   const next = nextState(task.state);
   const nextMeta = STATE_META[next];
+
+  // Com registro = qualquer Completion do dia (conclusiva ou CANCELADA): o
+  // clique já gravou um timestamp real, então o horário exibido é o executado.
+  const recorded = task.completedAtLabel != null;
+  const timeLabel = recorded ? task.completedAtLabel : task.timeLabel;
 
   function flashError() {
     setError(true);
@@ -99,22 +106,6 @@ export function TaskRow({ task, onSetState, onSetTime }: Props) {
     else flashError();
   }
 
-  /** Clique no horário previsto: grava como hora de conclusão do registro. */
-  async function applyScheduledTime() {
-    if (!task.timeLabel || busy) return;
-    setError(false);
-    setBusy(true);
-    const ok = await onSetTime(task.timeLabel);
-    setBusy(false);
-    if (!ok) flashError();
-  }
-
-  const conclusive = meta.conclusive;
-  const dimmed = task.state !== "NONE";
-  // Conclusão no horário previsto: o pill índigo já mostra a hora,
-  // então o pill de conclusão vira só a caneta (evita hora duplicada).
-  const sameAsScheduled = task.completedAtLabel != null && task.completedAtLabel === task.timeLabel;
-
   return (
     <li className="relative">
       <div
@@ -130,12 +121,12 @@ export function TaskRow({ task, onSetState, onSetTime }: Props) {
           }
         }}
         className={`flex min-h-16 w-full cursor-pointer items-center gap-3 rounded-2xl bg-white p-4 text-left shadow-sm transition active:scale-[0.99] dark:bg-zinc-800 ${
-          dimmed ? "opacity-50" : ""
+          task.state !== "NONE" ? "opacity-50" : ""
         }`}
       >
         <StateIcon state={task.state} />
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className={`truncate font-medium ${conclusive || task.state === "CANCELLED" ? "line-through" : ""}`}>
+          <span className={`truncate font-medium ${meta.conclusive || task.state === "CANCELLED" ? "line-through" : ""}`}>
             {task.name}
           </span>
           {task.note && (
@@ -156,6 +147,21 @@ export function TaskRow({ task, onSetState, onSetTime }: Props) {
               aria-label={`Hora de conclusão de ${task.name}`}
               className="h-9 rounded-xl border border-zinc-300 bg-white px-2 text-xs tabular-nums dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100"
             />
+            {task.timeLabel && (
+              <button
+                type="button"
+                onClick={() => setDraft(task.timeLabel!)}
+                disabled={busy}
+                title={`Usar horário previsto (${task.timeLabel})`}
+                aria-label={`Usar horário previsto ${task.timeLabel}`}
+                className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700 transition active:scale-[0.98] disabled:opacity-50 dark:bg-indigo-500/15 dark:text-indigo-300"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="h-4 w-4" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 7v5l3 2" />
+                </svg>
+              </button>
+            )}
             <button
               type="button"
               onClick={saveTime}
@@ -179,56 +185,37 @@ export function TaskRow({ task, onSetState, onSetTime }: Props) {
             </button>
           </span>
         ) : (
-          <span className="flex shrink-0 items-center gap-1.5">
-            {task.completedAtLabel && (
+          <span className="flex shrink-0 items-center gap-1">
+            {recorded && (
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   openEditor();
                 }}
+                onKeyDown={(e) => e.stopPropagation()}
                 title="Ajustar hora de conclusão"
-                aria-label={`Concluída às ${task.completedAtLabel}. Ajustar hora`}
-                className={`flex items-center gap-1 rounded-full py-1 text-xs font-semibold tabular-nums transition active:scale-[0.98] ${
-                  sameAsScheduled ? "px-2" : "px-2.5"
-                } ${
-                  conclusive
-                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
-                    : "bg-zinc-100 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300"
-                }`}
+                aria-label={`Hora de conclusão ${task.completedAtLabel}. Ajustar`}
+                className="flex h-7 w-7 items-center justify-center rounded-full text-zinc-400 transition hover:bg-zinc-100 active:scale-[0.98] dark:text-zinc-500 dark:hover:bg-zinc-700"
               >
-                {!sameAsScheduled && task.completedAtLabel}
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-3 w-3" strokeLinecap="round" strokeLinejoin="round">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-3.5 w-3.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
                 </svg>
               </button>
             )}
-            {task.shiftLabel && (
-              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 tabular-nums dark:bg-zinc-700 dark:text-zinc-300">
-                {task.shiftLabel}
+            {timeLabel && (
+              <span
+                className={`rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums ${
+                  !recorded
+                    ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300"
+                    : meta.conclusive
+                      ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+                      : "bg-zinc-100 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300"
+                }`}
+              >
+                {timeLabel}
               </span>
             )}
-            {task.timeLabel &&
-              (task.state === "NONE" ? (
-                <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 tabular-nums dark:bg-indigo-500/15 dark:text-indigo-300">
-                  {task.timeLabel}
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void applyScheduledTime();
-                  }}
-                  onKeyDown={(e) => e.stopPropagation()}
-                  title={`Definir hora de conclusão como ${task.timeLabel}`}
-                  aria-label={`Definir hora de conclusão de ${task.name} como ${task.timeLabel}`}
-                  className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 tabular-nums transition active:scale-[0.98] disabled:opacity-50 dark:bg-indigo-500/15 dark:text-indigo-300"
-                >
-                  {task.timeLabel}
-                </button>
-              ))}
           </span>
         )}
       </div>

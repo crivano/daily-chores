@@ -12,10 +12,8 @@ import {
   dateInTZ,
   due,
   effectiveAt,
-  formatShift,
   isValidLocalDate,
   parseLocalDate,
-  shiftOf,
   type CompletionsByTask,
   type TaskLike,
   type TasksById,
@@ -33,7 +31,7 @@ function stateOf(taskId: string, complByTask: CompletionsByTask): TaskState {
 
 /**
  * Payload completo do dia `requested` ("YYYY-MM-DD"). Ausente/inválido/futuro →
- * hoje no fuso do usuário. `alarms` só é preenchido para o dia de hoje.
+ * hoje no fuso do usuário.
  */
 export async function getDayPayload(userId: string, requested?: string | null): Promise<DayPayload> {
   const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -51,7 +49,7 @@ export async function getDayPayload(userId: string, requested?: string | null): 
 
   const timeOf = (d: Date) => formatInTimeZone(d, tz, "HH:mm");
 
-  const toDTO = (task: TaskLike, eff: Date | undefined, shiftMs?: number, note?: string): DayTaskDTO => {
+  const toDTO = (task: TaskLike, eff: Date | undefined, note?: string): DayTaskDTO => {
     const c = complByTask.get(task.id);
     return {
       taskId: task.id,
@@ -60,7 +58,6 @@ export async function getDayPayload(userId: string, requested?: string | null): 
       completedAt: c ? c.completedAt.toISOString() : null,
       completedAtLabel: c ? timeOf(c.completedAt) : null,
       timeLabel: eff ? timeOf(eff) : undefined,
-      shiftLabel: shiftMs !== undefined ? formatShift(shiftMs) || undefined : undefined,
       note,
     };
   };
@@ -74,12 +71,10 @@ export async function getDayPayload(userId: string, requested?: string | null): 
       eff: effectiveAt(t, D, tz, complByTask, tasksById)!,
     }))
     // Ordem = hora nominal → nome (comparador canônico, idem /tarefas): pura dos
-    // campos da tarefa. O horário efetivo (com shift de cadeia) segue no
+    // campos da tarefa. O horário previsto (com shift de cadeia) segue no
     // timeLabel — concluir a âncora muda o rótulo da dependente, nunca a posição.
     .sort((a, b) => compareTasksByTimeName(a.task, b.task))
-    .map(({ task, eff }) =>
-      toDTO(task, eff, task.anchorId ? shiftOf(task, D, tz, complByTask, tasksById) : 0),
-    );
+    .map(({ task, eff }) => toDTO(task, eff));
 
   const timeless = dueTasks
     .filter((t) => !t.time)
@@ -97,20 +92,7 @@ export async function getDayPayload(userId: string, requested?: string | null): 
     // Mesma ordem canônica (aqui reduz a A→Z): a posição não depende de a âncora
     // estar concluída — só o rótulo muda ("após X" vira a hora efetiva).
     .sort((a, b) => compareTasksByTimeName(a.task, b.task))
-    .map(({ task, eff, note }) => toDTO(task, eff, undefined, note));
-
-  // Qualquer registro suprime o alarme (conclusivos concluem; CANCELADO silencia).
-  const alarms =
-    D === todayD
-      ? dueTasks
-          .filter((t) => !complByTask.has(t.id))
-          .flatMap((t) => {
-            const eff = effectiveAt(t, D, tz, complByTask, tasksById);
-            return eff && eff.getTime() > now.getTime()
-              ? [{ taskId: t.id, name: t.name, at: eff.getTime() }]
-              : [];
-          })
-      : [];
+    .map(({ task, eff, note }) => toDTO(task, eff, note));
 
   const { y, m, d } = parseLocalDate(D);
   // Meio-dia UTC fixo: formatar a data do dia sem depender do fuso de execução.
@@ -135,6 +117,5 @@ export async function getDayPayload(userId: string, requested?: string | null): 
     }).length,
     cancelled: dueTasks.filter((t) => complByTask.get(t.id)?.status === "CANCELLED").length,
     tasks: { timed, timeless },
-    alarms,
   };
 }

@@ -11,15 +11,8 @@ export interface DayTaskDTO {
   state: TaskState; // "NONE" quando sem Completion
   completedAt: string | null; // ISO UTC
   completedAtLabel: string | null; // "HH:mm" no fuso do usuário
-  timeLabel?: string; // "HH:mm" do horário efetivo (quando alarma)
-  shiftLabel?: string; // "+0:05" / "−1:13"
+  timeLabel?: string; // "HH:mm" do horário previsto/efetivo (quando alarma)
   note?: string; // "após {âncora}"
-}
-
-export interface DayAlarmInfo {
-  taskId: string;
-  name: string;
-  at: number; // epoch ms do horário efetivo
 }
 
 export interface DayPayload {
@@ -36,5 +29,4 @@ export interface DayPayload {
     timed: DayTaskDTO[]; // com hora fixa — ordem canônica (hora nominal → nome)
     timeless: DayTaskDTO[]; // sem hora fixa — ordem canônica (A→Z)
   };
-  alarms: DayAlarmInfo[]; // apenas quando today (alarmes ainda pendentes)
 }

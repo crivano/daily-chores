@@ -31,8 +31,12 @@ const serwist = new Serwist({
 });
 
 /**
- * Push: com client visível (aba em foco) → postMessage (a página abre o
- * overlay e toca o som); senão → showNotification.
+ * Push: sempre mostra a NOTIFICAÇÃO — não existe mais overlay/alarme in-page.
+ * `requireInteraction: true` mantém o toast aberto até o usuário interagir no
+ * Chrome/Edge desktop (ex.: Windows); navegadores sem suporte (Firefox/Safari)
+ * ignoram a flag e seguem o timeout padrão deles, com o toast guardado na
+ * central de notificações. Se houver aba visível, avisa a página para
+ * revalidar os dados do dia (a notificação continua aparecendo).
  */
 self.addEventListener("push", (event) => {
   let payload: { taskId?: string; title?: string; body?: string; tag?: string } = {};
@@ -46,8 +50,7 @@ self.addEventListener("push", (event) => {
       const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       const visible = clients.find((c) => c.visibilityState === "visible");
       if (visible && "postMessage" in visible) {
-        visible.postMessage({ type: "ALARM", payload });
-        return;
+        visible.postMessage({ type: "PUSH_RECEIVED" });
       }
       // vibrate/sound/renotate não estão em todos os lib.d.ts — cast deliberado.
       const options = {
@@ -58,6 +61,7 @@ self.addEventListener("push", (event) => {
         sound: "/sounds/alarm.wav",
         tag: payload.tag,
         renotify: true,
+        requireInteraction: true,
         data: { url: "/" },
       } as NotificationOptions;
       await self.registration.showNotification(payload.title ?? "Daily Chores", options);

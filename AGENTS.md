@@ -10,7 +10,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 # Daily Chores (repositório `daily-alarm`)
 
-App web pessoal (UI toda em **pt-BR**) para rotinas diárias com alarmes. Tarefas recorrentes por dias da semana ou dia do mês, com hora opcional; marcar o checkbox registra o timestamp real do clique. Tarefas podem ser **relativas** a outra (âncora): o intervalo nominal entre as duas é preservado — âncora concluída X min após a hora nominal ⇒ dependente alarma X min após a sua.
+App web pessoal (UI toda em **pt-BR**) para rotinas diárias com notificações. Tarefas recorrentes por dias da semana ou dia do mês, com hora opcional; marcar o checkbox registra o timestamp real do clique. Tarefas podem ser **relativas** a outra (âncora): o intervalo nominal entre as duas é preservado — âncora concluída X min após a hora nominal ⇒ dependente notifica X min após a sua.
 
 > A especificação original se referia ao app como "Daily Alarm"; o produto chama-se **Daily Chores** (serviço `daily-chores`). Este bloco acima (`nextjs-agent-rules`) é gerado pelo `next dev` — não editar.
 
@@ -71,7 +71,7 @@ src/
 │   │   ├── push/test/           # POST dispara push de teste para todas as assinaturas do usuário
 │   │   └── internal/alarm|reconcile/  # disparador (Cloud Tasks/fila local) e reconciliação diária — auth OIDC ou x-dev-token
 │   ├── manifest.ts / sw.ts / login/ / layout.tsx (fontes Geist, appleWebApp, viewport)
-├── components/                  # ilhas client: DayBoard (hoje), TasksManager, TaskFormModal, TaskRow (ciclo de estados), StatsBoard/Stats* , SettingsClient, AlarmListener, AlarmOverlay, BottomNav, TimezoneSender, ServiceWorkerRegister
+├── components/                  # ilhas client: DayBoard (hoje), TasksManager, TaskFormModal, TaskRow (ciclo de estados + UM horário: previsto/executado), StatsBoard/Stats* , SettingsClient, BottomNav, TimezoneSender, ServiceWorkerRegister
 └── lib/
     ├── domain/schedule.ts       # ★ funções PURAS — ÚNICA fonte de verdade de due/nominal/shiftOf/effectiveAt/nextOccurrence/alarmName
     ├── domain/states.ts         # ★ TaskState + STATE_META (conclusivo x CANCELLED) — isomórfico
@@ -108,18 +108,16 @@ prisma/schema.prisma + migrations/
 - Datas são strings "YYYY-MM-DD" no fuso do usuário; toda conversão local↔UTC via `date-fns-tz` (DST-correct). `nextOccurrence` busca até 400 dias (mês sem dia 31 ⇒ não ocorre).
 - **Nunca duplique lógica de agendamento/estado em rotas ou componentes — sempre chame `lib/domain/`** (é o contrato testado).
 
-## Alarmes e notificações (como funciona de ponta a ponta)
+## Agendamento e notificações (como funciona de ponta a ponta)
 
 1. **Disparo é dirigido por eventos, sem polling**: qualquer mutação de tarefa/completion, cada disparo e o reconcile diário chamam `syncAlarms(taskId)` (recursivo na cadeia). O conjunto desejado = alarme de HOJE (se devido, ativo, não concluído, efetivo no futuro) + NOMINAL da próxima ocorrência. O diff com `AlarmQueued` deleta/cria no Cloud Tasks.
 2. Cloud Tasks chama `POST /api/internal/alarm` (OIDC da SA `alarm-runner`) → valida (ativa? devida? hoje? concluída?) → grava `AlarmDelivered` (P2002 = já entregue, descarta) → `sendPushToUser` → re-sync.
-3. **Há DOIS caminhos de entrega na ponta, e eles são independentes**:
-   - **Overlay in-page (NÃO é push)**: `DayBoard` recebe `alarms` (hoje, pendentes, efetivos no futuro) no payload do dia; `AlarmListener` cria `setTimeout` para cada um e abre o `AlarmOverlay` (tela cheia + som em loop + Concluir/Dispensar). Funciona **só com a aba aberta** e **não depende de assinatura push** — ouvir o alarme no browser com a aba aberta NÃO significa que o push está funcionando.
-   - **Web Push (app fechado)**: o SW (`sw.ts`) recebe o push; com client visível faz `postMessage` (a página abre o overlay); senão `showNotification` (vibra/som/tag). Requer **opt-in por dispositivo**.
-4. **Push é opt-in POR DISPOSITIVO**: Configurações → "Ativar alarmes neste dispositivo" → `pushManager.subscribe` com a VAPID pública → `POST /api/push/subscribe` (upsert por `endpoint`). **Multi-dispositivo é suportado**: N linhas `PushSubscription` por usuário, uma por endpoint; `sendPushToUser` faz fan-out para todas e remove as que devolvem 404/410. iOS 16.4+ exige o PWA instalado (Adicionar à Tela de Início); Android/desktop exigem HTTPS. "Disparar alarme de teste" envia para todas as assinaturas e retorna `{sent}` — `sent: 0` significa que nenhum dispositivo está inscrito.
+3. **A entrega na ponta é UM único caminho: Web Push (notificação)**. O overlay in-page de alarme (tela cheia + som em loop) existiu e foi **removido em 2026-10-17** — não recriar. O SW (`sw.ts`) recebe o push e SEMPRE faz `showNotification` com `requireInteraction: true` (mantém o toast aberto até o usuário interagir no Chrome/Edge desktop; Firefox/Safari ignoram a flag) — vibra/som/tag/renotify. Se há aba visível, o SW também manda `postMessage` (`PUSH_RECEIVED`) para o DayBoard revalidar o dia. Requer **opt-in por dispositivo**.
+4. **Push é opt-in POR DISPOSITIVO**: Configurações → "Ativar notificações neste dispositivo" → `pushManager.subscribe` com a VAPID pública → `POST /api/push/subscribe` (upsert por `endpoint`). **Multi-dispositivo é suportado**: N linhas `PushSubscription` por usuário, uma por endpoint; `sendPushToUser` faz fan-out para todas e remove as que devolvem 404/410. iOS 16.4+ exige o PWA instalado (Adicionar à Tela de Início); Android/desktop exigem HTTPS. "Enviar notificação de teste" envia para todas as assinaturas e retorna `{sent}` — `sent: 0` significa que nenhum dispositivo está inscrito.
 
 ### Checklist de diagnóstico de push
 
-1. Quantas assinaturas existem? (0 ⇒ nenhum dispositivo ativou; o browser "recebe" via overlay)
+1. Quantas assinaturas existem? (0 ⇒ nenhum dispositivo ativou — sem assinatura não há entrega nenhuma)
    ```sql
    SELECT u.email, split_part(split_part(ps.endpoint,'//',2),'/',1) AS push_service
    FROM "PushSubscription" ps JOIN "User" u ON u.id = ps."userId";
@@ -143,4 +141,5 @@ prisma/schema.prisma + migrations/
 
 ## Histórico de diagnóstico relevante
 
-- **2026-10-07** — "Notificações chegam no browser mas não no telefone": o banco tinha **0 assinaturas push** e 10 `AlarmDelivered` nos últimos 7 dias — ou seja, o pipeline disparava, o push não tinha para quem enviar, e o browser era atendido pelo **overlay in-page** (que não depende de push). Não é bug de "canal único por usuário": o modelo é multi-dispositivo por design; faltava o opt-in por dispositivo (no iOS, com o PWA instalado).
+- **2026-10-17** — Alarme in-page (overlay + som) **desativado e removido** (`AlarmListener`/`AlarmOverlay`/`alarms` do payload do dia): a entrega passou a ser exclusivamente a notificação push, com `requireInteraction: true` para o toast ficar aberto até o usuário interagir. Na mesma data a TaskRow passou a exibir **um único horário por linha** (previsto quando pendente; executado quando há registro, editável pela caneta — o pill de shift saiu da UI).
+- **2026-10-07** — "Notificações chegam no browser mas não no telefone": o banco tinha **0 assinaturas push** e 10 `AlarmDelivered` nos últimos 7 dias — ou seja, o pipeline disparava, o push não tinha para quem enviar, e o browser era atendido pelo **overlay in-page** (que não dependia de push). Não é bug de "canal único por usuário": o modelo é multi-dispositivo por design; faltava o opt-in por dispositivo (no iOS, com o PWA instalado).

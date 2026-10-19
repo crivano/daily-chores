@@ -91,7 +91,7 @@ export function SettingsClient({ email, timezone, timezoneDefaulted, vapidPublic
     }
   }
 
-  async function enableAlarms() {
+  async function enableNotifications() {
     if (!vapidPublicKey) return showToast("Servidor sem chaves VAPID configuradas.");
     if (typeof Notification === "undefined" || !("serviceWorker" in navigator)) {
       return showToast("Este navegador não suporta Web Push.");
@@ -119,25 +119,25 @@ export function SettingsClient({ email, timezone, timezoneDefaulted, vapidPublic
       });
       if (!res.ok) throw new Error();
       setSubscribed(true);
-      showToast("Alarmes ativados neste dispositivo ✅");
+      showToast("Notificações ativadas neste dispositivo ✅");
     } catch (err) {
       showToast(
         err instanceof Error && err.message
           ? `Falha ao ativar: ${err.message}`
-          : "Falha ao ativar alarmes (teste em um build de produção).",
+          : "Falha ao ativar notificações (teste em um build de produção).",
       );
     } finally {
       setBusy(false);
     }
   }
 
-  async function testAlarm() {
+  async function testNotification() {
     setBusy(true);
     try {
       const res = await fetch("/api/push/test", { method: "POST" });
       const data = (await res.json().catch(() => ({}))) as { sent?: number; error?: string };
       if (!res.ok) throw new Error(data.error ?? "Falha ao enviar.");
-      showToast(data.sent ? "Alarme de teste enviado 🔔" : "Nenhum dispositivo inscrito — ative primeiro.");
+      showToast(data.sent ? "Notificação de teste enviada 🔔" : "Nenhum dispositivo inscrito — ative primeiro.");
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Falha ao enviar teste.");
     } finally {
@@ -189,24 +189,24 @@ export function SettingsClient({ email, timezone, timezoneDefaulted, vapidPublic
           </p>
         )}
         <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-          Datas, virada de dia e alarmes usam este fuso.
+          Datas, virada de dia e notificações usam este fuso.
         </p>
       </section>
 
       <section className={`${card} flex flex-col gap-3`}>
         <div>
-          <h2 className="font-semibold">Alarmes neste dispositivo</h2>
+          <h2 className="font-semibold">Notificações neste dispositivo</h2>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
             Notificação: {permissionLabel}
             {subscribed != null && ` · inscrição: ${subscribed ? "ativa" : "nenhuma"}`}
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
-          <button type="button" className={buttonPrimary} onClick={enableAlarms} disabled={busy}>
-            {subscribed ? "Reativar alarmes" : "Ativar alarmes neste dispositivo"}
+          <button type="button" className={buttonPrimary} onClick={enableNotifications} disabled={busy}>
+            {subscribed ? "Reativar notificações" : "Ativar notificações neste dispositivo"}
           </button>
-          <button type="button" className={buttonSecondary} onClick={testAlarm} disabled={busy}>
-            Disparar alarme de teste
+          <button type="button" className={buttonSecondary} onClick={testNotification} disabled={busy}>
+            Enviar notificação de teste
           </button>
         </div>
         {!vapidPublicKey && (
@@ -222,7 +222,7 @@ export function SettingsClient({ email, timezone, timezoneDefaulted, vapidPublic
           <div>
             <p className="font-medium">Android / desktop</p>
             <p className="text-zinc-500 dark:text-zinc-400">
-              Menu do navegador → <strong>Instalar app</strong> / “Adicionar à tela inicial”. Alarmes chegam via Web Push mesmo com o app fechado.
+              Menu do navegador → <strong>Instalar app</strong> / “Adicionar à tela inicial”. Notificações chegam via Web Push mesmo com o app fechado.
             </p>
           </div>
           <div>

@@ -1,6 +1,6 @@
 /**
  * Evento global (window) para sinalizar que os dados do dia mudaram fora do
- * DayBoard (ex.: AlarmOverlay concluiu, TimezoneSender gravou o fuso).
+ * DayBoard (ex.: TimezoneSender gravou o fuso).
  * O DayBoard escuta e recarrega o payload.
  */
 export const DAY_CHANGED_EVENT = "dc:day-changed";
