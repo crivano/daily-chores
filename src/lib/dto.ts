@@ -1,4 +1,5 @@
 import type { Task } from "@/generated/prisma/client";
+import { normalizeAllowedStates, type TaskState } from "./domain/states";
 import { timeToMinutes } from "./format";
 
 /** Tarefa serializável para ilhas client (sem tipos do Prisma). */
@@ -12,6 +13,7 @@ export interface TaskDTO {
   time: string | null;
   anchorId: string | null;
   offsetMinutes: number | null;
+  allowedStates: TaskState[] | null; // null = sem restrição (todos)
   dependents: { id: string; name: string }[];
 }
 
@@ -26,6 +28,7 @@ export function taskToDTO(task: Task, dependents: { id: string; name: string }[]
     time: task.time,
     anchorId: task.anchorId,
     offsetMinutes: task.offsetMinutes,
+    allowedStates: normalizeAllowedStates(task.allowedStates),
     dependents,
   };
 }

@@ -34,6 +34,10 @@ model Task {
   anchor        Task?        @relation("chain", fields: [anchorId], references: [id])
   dependents    Task[]       @relation("chain")
   offsetMinutes Int? // obrigatório se anchorId != null && time == null
+  // Estados marcáveis da tarefa (Completion.status sem "NONE"): ARRAY vazio
+  // = sem restrição, todos os estados (default; tarefas anteriores ao recurso).
+  // "NONE" nunca entra — voltar a "não marcado" é sempre possível.
+  allowedStates String[] @default([])
   completions   Completion[]
 
   @@index([userId])
@@ -46,7 +50,7 @@ model Completion {
   userId      String
   localDate   String // "YYYY-MM-DD" no fuso do usuário
   completedAt DateTime // timestamp real do registro (UTC); editável pelo usuário
-  status      String   @default("DONE") // "DONE" | "CANCELLED" | "HAPPY" | "INDIFFERENT" | "SAD"
+  status      String   @default("DONE") // "DONE" | "CANCELLED" | "HAPPY" | "INDIFFERENT" | "SAD" | "BOMB"
 
   @@unique([taskId, localDate])
   @@index([userId, localDate])

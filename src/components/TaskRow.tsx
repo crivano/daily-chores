@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import type { DayTaskDTO } from "@/lib/domain/day";
-import { STATE_META, nextState, type TaskState } from "@/lib/domain/states";
+import { STATE_META, nextStateAllowed, type TaskState } from "@/lib/domain/states";
 
 interface Props {
   task: DayTaskDTO;
@@ -50,6 +50,12 @@ function StateIcon({ state }: { state: TaskState }) {
         </span>
       );
     }
+    case "BOMB":
+      return (
+        <span aria-hidden className={`${base} bg-orange-100 text-base leading-none dark:bg-orange-500/15`}>
+          💣
+        </span>
+      );
     default:
       return (
         <span aria-hidden className={`${base} border-2 border-zinc-300 dark:border-zinc-600`} />
@@ -72,8 +78,11 @@ export function TaskRow({ task, onSetState, onSetTime }: Props) {
   const [busy, setBusy] = useState(false);
 
   const meta = STATE_META[task.state];
-  const next = nextState(task.state);
-  const nextMeta = STATE_META[next];
+  // Ciclo da linha pula estados não permitidos para ESTA tarefa (null = todas,
+  // inclusive caches antigos do dia sem o campo). Sem nenhum permitido, o toque
+  // não muda nada (NONE → NONE) — tarefa de consulta/lembrete.
+  const next = nextStateAllowed(task.state, task.allowedStates ?? null);
+  const cycleLabel = next === task.state ? meta.label : `${meta.label} — toque para mudar para ${STATE_META[next].label.toLowerCase()}`;
 
   // Com registro = qualquer Completion do dia (conclusiva ou CANCELADA): o
   // clique já gravou um timestamp real, então o horário exibido é o executado.
@@ -111,8 +120,8 @@ export function TaskRow({ task, onSetState, onSetTime }: Props) {
       <div
         role="button"
         tabIndex={0}
-        aria-label={`${task.name}: ${meta.label}. Toque para mudar para ${nextMeta.label.toLowerCase()}`}
-        title={`${meta.label} — toque para mudar para ${nextMeta.label.toLowerCase()}`}
+        aria-label={`${task.name}: ${cycleLabel}`}
+        title={cycleLabel}
         onClick={cycle}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {

@@ -80,6 +80,7 @@ describe("buildStatsPayload", () => {
       HAPPY: 1,
       INDIFFERENT: 1,
       SAD: 1,
+      BOMB: 0,
       CANCELLED: 1,
     });
     expect(p.tasks[0].counts).toMatchObject({ DONE: 1, HAPPY: 1, CANCELLED: 1 }); // "a"
@@ -147,6 +148,19 @@ describe("buildStatsPayload", () => {
     expect(p.tasks[0].counts.DONE).toBe(1);
   });
 
+  it("BOMB conta como marcação conclusiva (dieta: dia com bomba fecha o dia)", () => {
+    const completions = [
+      mark("a", "2026-09-06", "BOMB"),
+      mark("a", "2026-09-07"),
+      mark("a", "2026-09-08", "CANCELLED"),
+    ];
+    const p = buildStatsPayload([task("a")], completions, WEEK.from, WEEK.to, TODAY);
+    expect(p.totals.BOMB).toBe(1);
+    expect(p.totals.DONE).toBe(1);
+    // 2 conclusivos (BOMB + DONE) de 7 devidas; CANCELLED não conta
+    expect(p.conclusionRate).toBeCloseTo(2 / 7);
+  });
+
   it("ordena por horário (sem hora primeiro), desempata por nome; marked não influencia", () => {
     const tasks = [
       task("janta", { time: "20:00" }),
@@ -191,6 +205,7 @@ describe("buildStatsPayload", () => {
       HAPPY: 0,
       INDIFFERENT: 0,
       SAD: 0,
+      BOMB: 0,
       CANCELLED: 0,
     });
     expect(p.tasks).toEqual([]);

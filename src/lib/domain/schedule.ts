@@ -29,13 +29,16 @@ export interface TaskLike {
   time: string | null; // "HH:mm"
   anchorId: string | null;
   offsetMinutes: number | null;
+  // Estados marcáveis ([] = sem restrição) — não afeta agendamento, mas o
+  // TaskLike espalha por DTOs do dia; normalizado por normalizeAllowedStates.
+  allowedStates?: string[];
 }
 
 export interface CompletionLike {
   taskId: string;
   localDate: string;
   completedAt: Date; // timestamp real do clique/registro (UTC)
-  status: string; // "DONE" | "CANCELLED" | "HAPPY" | "INDIFFERENT" | "SAD"
+  status: string; // "DONE" | "CANCELLED" | "HAPPY" | "INDIFFERENT" | "SAD" | "BOMB"
 }
 
 export type TasksById = Map<string, TaskLike>;

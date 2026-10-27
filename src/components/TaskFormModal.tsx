@@ -3,7 +3,9 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { TaskDTO } from "@/lib/dto";
+import type { TaskState } from "@/lib/domain/states";
 import { WEEKDAY_LABELS, formatOffset, gapMinutes } from "@/lib/format";
+import { STATUS_COLORS, STATUS_ORDER } from "./statsColors";
 
 interface Props {
   task: TaskDTO | null; // null = nova tarefa
@@ -42,6 +44,13 @@ export function TaskFormModal({ task, tasks, onClose }: Props) {
   const [time, setTime] = useState(task?.time ?? "08:00");
   const [anchorId, setAnchorId] = useState(task?.anchorId ?? "");
   const [offsetMinutes, setOffsetMinutes] = useState(String(task?.offsetMinutes ?? 15));
+  // Estados que a tarefa aceita ao ser marcada. Nova tarefa nasce só com
+  // "Feito" (o clássico check); tarefa sem restrição salva (null/legado) abre
+  // com todos. O servidor grava [] = sem restrição; aqui sempre enviamos o
+  // conjunto visível (mínimo 1 — "não marcado" não é configurável).
+  const [allowedStates, setAllowedStates] = useState<TaskState[]>(
+    task ? (task.allowedStates ?? [...STATUS_ORDER]) : ["DONE"],
+  );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -75,6 +84,12 @@ export function TaskFormModal({ task, tasks, onClose }: Props) {
     setWeekdays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]));
   }
 
+  function toggleAllowed(state: TaskState) {
+    setAllowedStates((prev) =>
+      prev.includes(state) ? prev.filter((s) => s !== state) : [...prev, state],
+    );
+  }
+
   async function submit() {
     setError(null);
     if (!name.trim()) return setError("Informe o nome da tarefa.");
@@ -82,6 +97,9 @@ export function TaskFormModal({ task, tasks, onClose }: Props) {
     if (scheduleType === "MONTHLY" && (monthDay < 1 || monthDay > 31)) return setError("Dia do mês deve estar entre 1 e 31.");
     if (!hasTime && anchorId && (!offsetMinutes || Number(offsetMinutes) < 0)) {
       return setError("Informe o offset em minutos (≥ 0).");
+    }
+    if (allowedStates.length === 0) {
+      return setError("Selecione pelo menos um estado de marcação.");
     }
 
     const payload = {
@@ -91,6 +109,7 @@ export function TaskFormModal({ task, tasks, onClose }: Props) {
       time: hasTime ? time : null,
       anchorTaskId: anchorId || null,
       offsetMinutes: !hasTime && anchorId ? Number(offsetMinutes) : null,
+      allowedStates,
     };
 
     setSaving(true);
@@ -295,6 +314,36 @@ export function TaskFormModal({ task, tasks, onClose }: Props) {
                 )}
               </div>
             )}
+
+            <div>
+              <span className={label}>Estados permitidos</span>
+              <div className="flex flex-wrap gap-1.5">
+                {STATUS_ORDER.map((state) => {
+                  const selected = allowedStates.includes(state);
+                  const c = STATUS_COLORS[state];
+                  return (
+                    <button
+                      key={state}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => toggleAllowed(state)}
+                      className={`flex h-9 items-center gap-1.5 rounded-xl px-3 text-xs font-semibold transition ${
+                        selected
+                          ? "bg-indigo-600 text-white"
+                          : "bg-white text-zinc-600 shadow-sm dark:bg-zinc-800 dark:text-zinc-300"
+                      }`}
+                    >
+                      <span aria-hidden className="text-sm leading-none">{c.glyph}</span>
+                      {c.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+                Quais estados esta tarefa pode receber ao ser tocada. O estado &quot;não
+                marcado&quot; está sempre disponível.
+              </p>
+            </div>
 
             {error && (
               <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-400">

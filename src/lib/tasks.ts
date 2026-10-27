@@ -4,9 +4,11 @@
  * - offsetMinutes obrigatório se dependente sem hora;
  * - proibir ciclos na cadeia;
  * - âncora deve ter o MESMO scheduleType e o MESMO conjunto de dias (v1),
- *   verificado transitivamente em toda a cadeia.
+ *   verificado transitivamente em toda a cadeia;
+ * - allowedStates: estados marcáveis (sem "NONE"); ARRAY vazio = sem restrição.
  */
 import type { Task } from "@/generated/prisma/client";
+import { COMPLETION_STATUSES, isTaskState } from "./domain/states";
 import { prisma } from "./prisma";
 
 export interface TaskInput {
@@ -17,6 +19,7 @@ export interface TaskInput {
   time?: unknown;
   anchorTaskId?: unknown;
   offsetMinutes?: unknown;
+  allowedStates?: unknown;
   active?: unknown;
 }
 
@@ -29,6 +32,7 @@ export interface NormalizedTask {
   time: string | null;
   anchorId: string | null;
   offsetMinutes: number | null;
+  allowedStates: string[]; // ordem canônica; vazio = sem restrição
 }
 
 export type ValidationResult =
@@ -138,6 +142,30 @@ export async function validateTaskInput(
     offsetMinutes = existing.offsetMinutes;
   }
 
+  // Estados marcáveis: ausente → mantém os atuais (nova tarefa: sem restrição).
+  // Array/null → valida os valores e grava exatamente o conjunto pedido
+  // ([] = sem restrição; "NONE" nunca — "não marcado" é sempre possível).
+  let allowedStates: string[] | undefined;
+  if (input.allowedStates === undefined) {
+    allowedStates = existing?.allowedStates ?? [];
+  } else if (input.allowedStates === null) {
+    allowedStates = [];
+  } else if (Array.isArray(input.allowedStates)) {
+    const seen = new Set<string>();
+    for (const s of input.allowedStates) {
+      if (s === "NONE") {
+        return bad(400, "\"NONE\" não é configurável — o estado \"não marcado\" é sempre possível.");
+      }
+      if (!isTaskState(s)) {
+        return bad(400, "allowedStates inválidos (use DONE, CANCELLED, HAPPY, INDIFFERENT, SAD ou BOMB).");
+      }
+      seen.add(s);
+    }
+    allowedStates = COMPLETION_STATUSES.filter((s) => seen.has(s));
+  } else {
+    return bad(400, "allowedStates deve ser um array de estados.");
+  }
+
   // ---------- regras de âncora ----------
   if (anchorId && time == null && offsetMinutes == null) {
     return bad(400, "Tarefa sem hora fixa relativa exige o offset em minutos após a âncora.");
@@ -235,6 +263,7 @@ export async function validateTaskInput(
       time: timeValue,
       anchorId: anchorValue,
       offsetMinutes: offsetValue,
+      allowedStates,
     },
   };
 }

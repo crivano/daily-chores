@@ -13,6 +13,7 @@ export interface DayTaskDTO {
   completedAtLabel: string | null; // "HH:mm" no fuso do usuário
   timeLabel?: string; // "HH:mm" do horário previsto/efetivo (quando alarma)
   note?: string; // "após {âncora}"
+  allowedStates: TaskState[] | null; // estados marcáveis; null = sem restrição
 }
 
 export interface DayPayload {

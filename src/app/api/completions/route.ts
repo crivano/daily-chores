@@ -3,7 +3,7 @@ import { fromZonedTime } from "date-fns-tz";
 import { auth } from "@/lib/auth";
 import { DEFAULT_TZ, dateInTZ, isValidLocalDate, nominal } from "@/lib/domain/schedule";
 import type { TaskLike } from "@/lib/domain/schedule";
-import { isTaskState, type TaskState } from "@/lib/domain/states";
+import { isStateAllowed, isTaskState, normalizeAllowedStates, type TaskState } from "@/lib/domain/states";
 import { getDayPayload } from "@/lib/day";
 import { prisma } from "@/lib/prisma";
 import { syncAlarms } from "@/lib/sync";
@@ -56,6 +56,11 @@ export async function POST(req: Request) {
   const task = await prisma.task.findUnique({ where: { id: taskId } });
   if (!task || task.userId !== userId) {
     return Response.json({ error: "Tarefa não encontrada." }, { status: 404 });
+  }
+
+  // Restrição por tarefa: estados que ela aceita ser marcada ([] = todas).
+  if (status && status !== "NONE" && !isStateAllowed(normalizeAllowedStates(task.allowedStates), status)) {
+    return Response.json({ error: "Este estado não está disponível para esta tarefa." }, { status: 400 });
   }
 
   const user = await prisma.user.findUnique({ where: { id: userId } });

@@ -10,14 +10,14 @@ export type MarkedStatus = Exclude<TaskState, "NONE">;
 
 export interface StatusColor {
   label: string; // "Feito" (mesma fonte do resto do app)
-  glyph: string; // ✓ / 😊 / 😐 / 😟 / ⊘
+  glyph: string; // ✓ / 😊 / 😐 / 😟 / 💣 / ⊘
   hex: string; // fill dos SVGs (recharts)
   bar: string; // classe do segmento de barra CSS
   text: string; // classe de texto da legenda
 }
 
 /** Ordem canônica de exibição (conclusivos primeiro, cancelado por último). */
-export const STATUS_ORDER: MarkedStatus[] = ["DONE", "HAPPY", "INDIFFERENT", "SAD", "CANCELLED"];
+export const STATUS_ORDER: MarkedStatus[] = ["DONE", "HAPPY", "INDIFFERENT", "SAD", "BOMB", "CANCELLED"];
 
 export const STATUS_COLORS: Record<MarkedStatus, StatusColor> = {
   DONE: {
@@ -47,6 +47,13 @@ export const STATUS_COLORS: Record<MarkedStatus, StatusColor> = {
     hex: "#f43f5e", // rose-500
     bar: "bg-rose-500",
     text: "text-rose-600 dark:text-rose-400",
+  },
+  BOMB: {
+    label: STATE_META.BOMB.label,
+    glyph: "💣",
+    hex: "#f97316", // orange-500
+    bar: "bg-orange-500",
+    text: "text-orange-600 dark:text-orange-400",
   },
   CANCELLED: {
     label: STATE_META.CANCELLED.label,

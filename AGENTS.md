@@ -74,7 +74,7 @@ src/
 ├── components/                  # ilhas client: DayBoard (hoje), TasksManager, TaskFormModal, TaskRow (ciclo de estados + UM horário: previsto/executado), StatsBoard/Stats* , SettingsClient, BottomNav, TimezoneSender, ServiceWorkerRegister
 └── lib/
     ├── domain/schedule.ts       # ★ funções PURAS — ÚNICA fonte de verdade de due/nominal/shiftOf/effectiveAt/nextOccurrence/alarmName
-    ├── domain/states.ts         # ★ TaskState + STATE_META (conclusivo x CANCELLED) — isomórfico
+    ├── domain/states.ts         # ★ TaskState + STATE_META (conclusivo x CANCELLED) + allowedStates (isStateAllowed/nextStateAllowed/normalizeAllowedStates) — isomórfico
     ├── domain/stats.ts / day.ts # tipos/DTOs do payload (pure)
     ├── day.ts                   # getDayPayload — monta o dia (server-only)
     ├── stats.ts                 # getStatsPayload (server-only)
@@ -93,15 +93,16 @@ prisma/schema.prisma + migrations/
 ## Modelo de dados (Prisma)
 
 - `User` (googleSub único, email único, `timezone` IANA nullable — null ⇒ `DEFAULT_TZ = "America/Sao_Paulo"` e UI avisa).
-- `Task`: `scheduleType` "WEEKLY" (`weekdays Int[]`, 0=domingo..6) | "MONTHLY" (`monthDay` 1..31); `time "HH:mm"` nullable; cadeia via `anchorId` (+`offsetMinutes`).
-- `Completion`: única por `(taskId, localDate)`; `completedAt` = timestamp real (editável); `status` = DONE | CANCELLED | HAPPY | INDIFFERENT | SAD.
+- `Task`: `scheduleType` "WEEKLY" (`weekdays Int[]`, 0=domingo..6) | "MONTHLY" (`monthDay` 1..31); `time "HH:mm"` nullable; cadeia via `anchorId` (+`offsetMinutes`); `allowedStates String[] @default([])` = estados marcáveis (ARRAY vazio = sem restrição — default histórico; "NONE" nunca entra).
+- `Completion`: única por `(taskId, localDate)`; `completedAt` = timestamp real (editável); `status` = DONE | CANCELLED | HAPPY | INDIFFERENT | SAD | BOMB.
 - `PushSubscription`: **uma linha por dispositivo** (`endpoint` único); userId + chaves p256dh/auth. **Multi-dispositivo por usuário é suportado** — ver "Notificações".
 - `AlarmDelivered`: idempotência do disparo — única por `(taskId, localDate, kind)`, kind = NOMINAL | SHIFTED.
 - `AlarmQueued`: espelho do que está no Cloud Tasks (name = `alarm-{taskId}-{localDate}-{epochMs}`).
 
 ## Regras de domínio (resumo operacional)
 
-- **Conclusivos** (DONE, HAPPY, INDIFFERENT, SAD): param o alarme, contam no progresso, deslocam cadeias. **CANCELLED**: silencia o alarme mas NÃO conta nem desloca cadeias (dependentes usam o nominal).
+- **Conclusivos** (DONE, HAPPY, INDIFFERENT, SAD, **BOMB** 💣 "Bomba" — falha registrada, ex.: estourou a dieta): param o alarme, contam no progresso, deslocam cadeias. **CANCELLED**: silencia o alarme mas NÃO conta nem desloca cadeias (dependentes usam o nominal).
+- **Estados permitidos por tarefa** (`Task.allowedStates`, definidos no form de edição): no banco ARRAY vazio = sem restrição (todas as tarefas legadas); no domínio/DTO isso vira `null` (`normalizeAllowedStates`). O ciclo do TaskRow (`nextStateAllowed`) pula os não permitidos e "NONE" é sempre possível (não configurável). O form exige ≥ 1 estado (nova tarefa nasce com só "Feito"); `POST /api/completions` rejeita estado fora da lista com 400.
 - `effectiveAt` (instante UTC do alarme): sem âncora+hora ⇒ nominal; com hora+âncora conclusiva ⇒ nominal + (completedAt(âncora) − nominal(âncora)); com hora+âncora pendente ⇒ nominal + shift herdado (provisório); sem hora+âncora conclusiva ⇒ completedAt(âncora) + offsetMinutes; sem hora+âncora pendente ⇒ não alarma (UI: "após {âncora}").
 - Política relativas: dependente alarma no nominal mesmo com âncora pendente; âncora marcada ANTES do nominal da dependente ⇒ cancela o nominal e agenda direto no deslocado; marcada DEPOIS e dependente pendente ⇒ alarma de novo (`kind=SHIFTED`). Tolerância de 30 s (`EARLY_DELIVERY_TOLERANCE_MS`) para não repetir quando o nominal foi entregue adiantado.
 - Validações de tarefa (`lib/tasks.ts`): dependente com hora exige âncora COM hora; `offsetMinutes` obrigatório se dependente sem hora; sem ciclos; cadeia inteira com mesmo scheduleType e dias (verificado transitivamente). Excluir âncora com dependentes é bloqueado (409 com nomes).

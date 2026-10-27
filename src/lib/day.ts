@@ -18,7 +18,7 @@ import {
   type TaskLike,
   type TasksById,
 } from "./domain/schedule";
-import { isConclusive, isTaskState, type TaskState } from "./domain/states";
+import { isConclusive, isTaskState, normalizeAllowedStates, type TaskState } from "./domain/states";
 import { compareTasksByTimeName } from "./dto";
 import { prisma } from "./prisma";
 
@@ -59,6 +59,7 @@ export async function getDayPayload(userId: string, requested?: string | null): 
       completedAtLabel: c ? timeOf(c.completedAt) : null,
       timeLabel: eff ? timeOf(eff) : undefined,
       note,
+      allowedStates: normalizeAllowedStates(task.allowedStates),
     };
   };
 

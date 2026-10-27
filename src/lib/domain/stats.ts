@@ -28,12 +28,12 @@ import { isConclusive, isTaskState, type TaskState } from "./states";
 export type MarkedStatus = Exclude<TaskState, "NONE">;
 
 /** Ordem canônica de exibição (conclusivos primeiro, cancelado por último). */
-export const STATUS_KEYS: MarkedStatus[] = ["DONE", "HAPPY", "INDIFFERENT", "SAD", "CANCELLED"];
+export const STATUS_KEYS: MarkedStatus[] = ["DONE", "HAPPY", "INDIFFERENT", "SAD", "BOMB", "CANCELLED"];
 
 export type StatusCounts = Record<MarkedStatus, number>;
 
 function emptyCounts(): StatusCounts {
-  return { DONE: 0, HAPPY: 0, INDIFFERENT: 0, SAD: 0, CANCELLED: 0 };
+  return { DONE: 0, HAPPY: 0, INDIFFERENT: 0, SAD: 0, BOMB: 0, CANCELLED: 0 };
 }
 
 /** Total de marcações (soma de todos os status). */
@@ -41,7 +41,7 @@ export function markedOf(counts: StatusCounts): number {
   return STATUS_KEYS.reduce((sum, k) => sum + counts[k], 0);
 }
 
-/** Marcações em status conclusivo (DONE, HAPPY, INDIFFERENT, SAD). */
+/** Marcações em status conclusivo (DONE, HAPPY, INDIFFERENT, SAD, BOMB). */
 export function conclusivesOf(counts: StatusCounts): number {
   return STATUS_KEYS.filter((k) => isConclusive(k)).reduce((sum, k) => sum + counts[k], 0);
 }

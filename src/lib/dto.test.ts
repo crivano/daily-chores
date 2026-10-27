@@ -11,6 +11,7 @@ const t = (name: string, time: string | null): TaskDTO => ({
   time,
   anchorId: null,
   offsetMinutes: null,
+  allowedStates: null,
   dependents: [],
 });
 
