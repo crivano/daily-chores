@@ -32,6 +32,9 @@ export interface TaskLike {
   // Estados marcáveis ([] = sem restrição) — não afeta agendamento, mas o
   // TaskLike espalha por DTOs do dia; normalizado por normalizeAllowedStates.
   allowedStates?: string[];
+  // "SIMPLE" | "WORKOUT" — também não afeta agendamento; o payload do dia usa
+  // para anexar os exercícios da série.
+  kind?: string;
 }
 
 export interface CompletionLike {

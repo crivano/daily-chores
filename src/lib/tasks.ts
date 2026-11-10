@@ -5,10 +5,13 @@
  * - proibir ciclos na cadeia;
  * - âncora deve ter o MESMO scheduleType e o MESMO conjunto de dias (v1),
  *   verificado transitivamente em toda a cadeia;
- * - allowedStates: estados marcáveis (sem "NONE"); ARRAY vazio = sem restrição.
+ * - allowedStates: estados marcáveis (sem "NONE"); ARRAY vazio = sem restrição;
+ * - kind: "SIMPLE" | "WORKOUT" (os exercícios da série são validados à parte,
+ *   em domain/workout.ts, e gravados por lib/exercises.ts).
  */
 import type { Task } from "@/generated/prisma/client";
 import { COMPLETION_STATUSES, isTaskState } from "./domain/states";
+import { isTaskKind, type TaskKind } from "./domain/workout";
 import { prisma } from "./prisma";
 
 export interface TaskInput {
@@ -21,6 +24,7 @@ export interface TaskInput {
   offsetMinutes?: unknown;
   allowedStates?: unknown;
   active?: unknown;
+  kind?: unknown;
 }
 
 export interface NormalizedTask {
@@ -33,6 +37,7 @@ export interface NormalizedTask {
   anchorId: string | null;
   offsetMinutes: number | null;
   allowedStates: string[]; // ordem canônica; vazio = sem restrição
+  kind: TaskKind;
 }
 
 export type ValidationResult =
@@ -68,6 +73,15 @@ export async function validateTaskInput(
   if (name.length > 80) return bad(400, "Nome muito longo (máx. 80 caracteres).");
 
   const active = typeof input.active === "boolean" ? input.active : (existing?.active ?? true);
+
+  let kind: TaskKind;
+  if (input.kind === undefined) {
+    kind = existing && isTaskKind(existing.kind) ? existing.kind : "SIMPLE";
+  } else if (isTaskKind(input.kind)) {
+    kind = input.kind;
+  } else {
+    return bad(400, "Tipo de tarefa inválido (use SIMPLE ou WORKOUT).");
+  }
 
   const rawType = typeof input.scheduleType === "string" ? input.scheduleType : undefined;
   const scheduleType = (rawType ?? existing?.scheduleType) as "WEEKLY" | "MONTHLY" | undefined;
@@ -264,6 +278,7 @@ export async function validateTaskInput(
       anchorId: anchorValue,
       offsetMinutes: offsetValue,
       allowedStates,
+      kind,
     },
   };
 }

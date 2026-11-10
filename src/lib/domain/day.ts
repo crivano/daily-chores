@@ -3,6 +3,33 @@
  * Preenchidos por getDayPayload (src/lib/day.ts) e consumidos pelo DayBoard.
  */
 import type { TaskState } from "./states";
+import type { LoadUnit } from "./workout";
+
+/**
+ * Exercício da série no dia. Marcado → valores do SNAPSHOT do registro;
+ * pendente → plano atual. Arquivados só aparecem se registrados no dia.
+ */
+export interface DayExerciseDTO {
+  exerciseId: string;
+  name: string;
+  sets: number | null;
+  reps: number | null;
+  durationSec: number | null;
+  load: number | null;
+  loadUnit: LoadUnit;
+  restSec: number | null;
+  notes: string | null;
+  done: boolean;
+  doneAtLabel: string | null; // "HH:mm" no fuso do usuário
+  archived: boolean;
+}
+
+/** Progresso da série no dia (só em tarefas WORKOUT). */
+export interface DayWorkoutDTO {
+  exercises: DayExerciseDTO[];
+  done: number; // exercícios ATIVOS marcados
+  total: number; // exercícios ATIVOS
+}
 
 /** Linha da lista do dia. */
 export interface DayTaskDTO {
@@ -14,6 +41,7 @@ export interface DayTaskDTO {
   timeLabel?: string; // "HH:mm" do horário previsto/efetivo (quando alarma)
   note?: string; // "após {âncora}"
   allowedStates: TaskState[] | null; // estados marcáveis; null = sem restrição
+  workout?: DayWorkoutDTO; // presente só em séries de exercícios
 }
 
 export interface DayPayload {

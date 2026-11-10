@@ -17,6 +17,7 @@ model User {
   timezone      String? // IANA, ex.: America/Sao_Paulo
   tasks         Task[]
   subscriptions PushSubscription[]
+  oauthGrants   OAuthGrant[]
 }
 
 model Task {
@@ -38,9 +39,57 @@ model Task {
   // = sem restrição, todos os estados (default; tarefas anteriores ao recurso).
   // "NONE" nunca entra — voltar a "não marcado" é sempre possível.
   allowedStates String[] @default([])
+  // "SIMPLE" (default, tarefa clássica) | "WORKOUT" (série de exercícios:
+  // marcar todos os exercícios do dia conclui a tarefa automaticamente).
+  kind          String       @default("SIMPLE")
   completions   Completion[]
+  exercises     Exercise[]
 
   @@index([userId])
+}
+
+// Exercício de uma série (Task.kind = "WORKOUT"). Sem biblioteca compartilhada:
+// cada série tem os seus. Remover = arquivar (archivedAt) para preservar o
+// histórico de ExerciseLog. Os valores aqui são o PLANO atual — ajustes feitos
+// no dia passam a valer para os próximos treinos.
+model Exercise {
+  id          String        @id @default(cuid())
+  taskId      String
+  task        Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  position    Int
+  name        String
+  sets        Int?
+  reps        Int?
+  durationSec Int? // exercícios por tempo (ex.: prancha)
+  load        Float?
+  loadUnit    String        @default("kg") // "kg" | "lb"
+  restSec     Int?
+  notes       String?
+  archivedAt  DateTime?
+  createdAt   DateTime      @default(now())
+  logs        ExerciseLog[]
+
+  @@index([taskId])
+}
+
+// Registro do exercício no dia: um checkbox por exercício. Guarda um SNAPSHOT
+// dos valores executados — editar o plano depois não reescreve o histórico.
+model ExerciseLog {
+  id          String   @id @default(cuid())
+  exerciseId  String
+  exercise    Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  taskId      String
+  userId      String
+  localDate   String // "YYYY-MM-DD" no fuso do usuário
+  doneAt      DateTime // timestamp real do clique (UTC)
+  sets        Int?
+  reps        Int?
+  durationSec Int?
+  load        Float?
+  loadUnit    String   @default("kg")
+
+  @@unique([exerciseId, localDate])
+  @@index([taskId, localDate])
 }
 
 model Completion {
@@ -82,4 +131,51 @@ model AlarmQueued {
   kind      String
 
   @@index([taskId])
+}
+
+// ---------- OAuth 2.1 (servidor MCP em /api/mcp) ----------
+// O app é o próprio Authorization Server: clientes MCP (Claude, ChatGPT,
+// Claude Code…) se registram por DCR (RFC 7591), o usuário consente em
+// /oauth/authorize com a sessão Google e recebe tokens OPACOS. Só os hashes
+// SHA-256 dos códigos/tokens ficam no banco.
+
+// Cliente registrado (público — sem secret; PKCE S256 obrigatório).
+model OAuthClient {
+  id           String       @id // client_id (aleatório)
+  name         String
+  redirectUris String[]
+  createdAt    DateTime     @default(now())
+  codes        OAuthCode[]
+  grants       OAuthGrant[]
+}
+
+// Código de autorização (uso único, expira em minutos).
+model OAuthCode {
+  codeHash      String      @id
+  clientId      String
+  client        OAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  userId        String
+  redirectUri   String
+  codeChallenge String
+  scope         String
+  expiresAt     DateTime
+}
+
+// Concessão ativa usuário × cliente: um par access/refresh que ROTACIONA a
+// cada refresh. Revogar = apagar a linha (Configurações → Assistentes de IA).
+model OAuthGrant {
+  id               String      @id @default(cuid())
+  clientId         String
+  client           OAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  userId           String
+  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scope            String
+  accessHash       String      @unique
+  accessExpiresAt  DateTime
+  refreshHash      String      @unique
+  refreshExpiresAt DateTime
+  createdAt        DateTime    @default(now())
+  lastUsedAt       DateTime?
+
+  @@index([userId])
 }

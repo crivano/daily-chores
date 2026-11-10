@@ -21,6 +21,7 @@ App web pessoal (UI toda em **pt-BR**) para rotinas diárias com notificações.
 - **Neon Postgres** — runtime usa a string **POOLED** (`DATABASE_URL`, host com `-pooler`); migrations usam a string **DIRETA** (`DIRECT_URL`): `DATABASE_URL="$DIRECT_URL" npx prisma migrate deploy`.
 - **Auth.js v5 beta + Google** (sessão JWT). Ver gotcha do `user.id` em "Autenticação".
 - **Web Push + PWA/Serwist** — service worker em `src/app/sw.ts` compilado para `public/sw.js` pelo `@serwist/next`. **Serwist fica DESLIGADO em dev** (`disable: NODE_ENV === "development"` no `next.config.ts`) — para testar push de verdade: `npm run build && npm start`.
+- **Servidor MCP (SDK v2 `@modelcontextprotocol/server`)** em `/api/mcp` — `createMcpHandler` (revisão 2026-07-28 + fallback stateless 2025), factory por requisição amarrada ao usuário do token. O app é o **próprio Authorization Server OAuth 2.1** (DCR + PKCE S256, tokens opacos com hash no banco). Ver "Servidor MCP".
 - **Cloud Tasks** (fila `alarms`) + **Cloud Scheduler** (reconcile diário) + deploy no **Cloud Run** escalando a zero (`output: "standalone"`, Dockerfile multi-stage node:22-alpine). Sem `GCP_PROJECT_ID`/`GCP_LOCATION`, o `lib/alarms.ts` usa uma **fila local em memória** que chama o mesmo endpoint com `x-dev-token`.
 
 ## Comandos
@@ -69,7 +70,11 @@ src/
 │   │   ├── stats/               # GET estatísticas (?from&to)
 │   │   ├── push/subscribe/      # POST upsert de PushSubscription (por endpoint)
 │   │   ├── push/test/           # POST dispara push de teste para todas as assinaturas do usuário
-│   │   └── internal/alarm|reconcile/  # disparador (Cloud Tasks/fila local) e reconciliação diária — auth OIDC ou x-dev-token
+│   │   ├── internal/alarm|reconcile/  # disparador (Cloud Tasks/fila local) e reconciliação diária — auth OIDC ou x-dev-token
+│   │   ├── mcp/                 # servidor MCP (Bearer OAuth) — ferramentas em lib/mcp/server.ts
+│   │   └── oauth/register|token|revoke/  # DCR (RFC 7591), token (code+PKCE / refresh com rotação), revogação (RFC 7009)
+│   ├── .well-known/oauth-authorization-server + oauth-protected-resource/[[...path]]  # descoberta (RFC 8414/9728)
+│   ├── oauth/authorize/         # tela de consentimento (sessão Google; sem sessão → /login?callbackUrl=…)
 │   ├── manifest.ts / sw.ts / login/ / layout.tsx (fontes Geist, appleWebApp, viewport)
 ├── components/                  # ilhas client: DayBoard (hoje), TasksManager, TaskFormModal, TaskRow (ciclo de estados + UM horário: previsto/executado), StatsBoard/Stats* , SettingsClient, BottomNav, TimezoneSender, ServiceWorkerRegister
 └── lib/
@@ -85,6 +90,10 @@ src/
     ├── auth.config.ts           # edge-safe (sem Prisma) — usada pelo proxy
     ├── auth.ts + auth-callbacks.ts # instância completa (Google + callbacks com DB)
     ├── internal-auth.ts         # OIDC verifyIdToken + claim email == ALARM_SA_EMAIL; ou x-dev-token
+    ├── taskService.ts / completions.ts # mutações compartilhadas por rotas REST e MCP (createTask/updateTask/deleteTask, setCompletion)
+    ├── workoutHistory.ts        # histórico de execução de uma série (snapshots de ExerciseLog)
+    ├── mcp/server.ts            # ★ ferramentas MCP — só delegam aos serviços acima (nunca regra própria)
+    ├── oauth-core.ts / oauth.ts / oauth-http.ts # OAuth: regras puras (testadas) / persistência / respostas HTTP+CORS
     ├── prisma.ts                # Proxy lazy (ver acima)
     ├── dto.ts / dayCache.ts / clientEvents.ts / format.ts / env.ts
 prisma/schema.prisma + migrations/
@@ -94,9 +103,13 @@ prisma/schema.prisma + migrations/
 
 - `User` (googleSub único, email único, `timezone` IANA nullable — null ⇒ `DEFAULT_TZ = "America/Sao_Paulo"` e UI avisa).
 - `Task`: `scheduleType` "WEEKLY" (`weekdays Int[]`, 0=domingo..6) | "MONTHLY" (`monthDay` 1..31); `time "HH:mm"` nullable; cadeia via `anchorId` (+`offsetMinutes`); `allowedStates String[] @default([])` = estados marcáveis (ARRAY vazio = sem restrição — default histórico; "NONE" nunca entra).
+- `Task.kind`: "SIMPLE" (default) | "WORKOUT" (série de exercícios).
+- `Exercise`: exercícios de UMA série (sem biblioteca compartilhada) — nome, `sets`, `reps`, `durationSec`, `load` + `loadUnit` (kg|lb), `restSec`, `notes`, `position`. Remover = `archivedAt` (preserva histórico).
+- `ExerciseLog`: único por `(exerciseId, localDate)` — um checkbox por exercício; `doneAt` real + SNAPSHOT dos valores executados.
 - `Completion`: única por `(taskId, localDate)`; `completedAt` = timestamp real (editável); `status` = DONE | CANCELLED | HAPPY | INDIFFERENT | SAD | BOMB.
 - `PushSubscription`: **uma linha por dispositivo** (`endpoint` único); userId + chaves p256dh/auth. **Multi-dispositivo por usuário é suportado** — ver "Notificações".
 - `AlarmDelivered`: idempotência do disparo — única por `(taskId, localDate, kind)`, kind = NOMINAL | SHIFTED.
+- `OAuthClient` (cliente MCP registrado por DCR, público), `OAuthCode` (uso único, 5 min, hash), `OAuthGrant` (par access 1 h / refresh 90 dias que rotaciona; revogar = apagar a linha).
 - `AlarmQueued`: espelho do que está no Cloud Tasks (name = `alarm-{taskId}-{localDate}-{epochMs}`).
 
 ## Regras de domínio (resumo operacional)
@@ -105,6 +118,7 @@ prisma/schema.prisma + migrations/
 - **Estados permitidos por tarefa** (`Task.allowedStates`, definidos no form de edição): no banco ARRAY vazio = sem restrição (todas as tarefas legadas); no domínio/DTO isso vira `null` (`normalizeAllowedStates`). O ciclo do TaskRow (`nextStateAllowed`) pula os não permitidos e "NONE" é sempre possível (não configurável). O form exige ≥ 1 estado (nova tarefa nasce com só "Feito"); `POST /api/completions` rejeita estado fora da lista com 400.
 - `effectiveAt` (instante UTC do alarme): sem âncora+hora ⇒ nominal; com hora+âncora conclusiva ⇒ nominal + (completedAt(âncora) − nominal(âncora)); com hora+âncora pendente ⇒ nominal + shift herdado (provisório); sem hora+âncora conclusiva ⇒ completedAt(âncora) + offsetMinutes; sem hora+âncora pendente ⇒ não alarma (UI: "após {âncora}").
 - Política relativas: dependente alarma no nominal mesmo com âncora pendente; âncora marcada ANTES do nominal da dependente ⇒ cancela o nominal e agenda direto no deslocado; marcada DEPOIS e dependente pendente ⇒ alarma de novo (`kind=SHIFTED`). Tolerância de 30 s (`EARLY_DELIVERY_TOLERANCE_MS`) para não repetir quando o nominal foi entregue adiantado.
+- **Séries de exercícios** (`domain/workout.ts`, persistência em `lib/exercises.ts`, rota `POST /api/exercises/log`): marcar o ÚLTIMO exercício ativo grava a Completion automática (DONE, ou o 1º conclusivo permitido) com `completedAt` = hora do último; desmarcar de uma série completa desfaz o automático; arquivar pelo cadastro os pendentes de hoje também conclui (mas incluir exercício numa série já concluída NÃO reabre o dia — `completeWorkoutAfterEdit`); estados escolhidos à mão nunca são tocados. Ajustar valores no dia de HOJE atualiza o plano do exercício (vale para os próximos treinos); em dia passado só corrige o snapshot. A lista de exercícios vai completa em POST/PATCH `/api/tasks` (`exercises`, ordem = position; ausente no PATCH = mantém).
 - Validações de tarefa (`lib/tasks.ts`): dependente com hora exige âncora COM hora; `offsetMinutes` obrigatório se dependente sem hora; sem ciclos; cadeia inteira com mesmo scheduleType e dias (verificado transitivamente). Excluir âncora com dependentes é bloqueado (409 com nomes).
 - Datas são strings "YYYY-MM-DD" no fuso do usuário; toda conversão local↔UTC via `date-fns-tz` (DST-correct). `nextOccurrence` busca até 400 dias (mês sem dia 31 ⇒ não ocorre).
 - **Nunca duplique lógica de agendamento/estado em rotas ou componentes — sempre chame `lib/domain/`** (é o contrato testado).
@@ -126,9 +140,17 @@ prisma/schema.prisma + migrations/
 2. O pipeline disparou? `SELECT count(*) FROM "AlarmDelivered" WHERE "deliveredAt" > now() - interval '7 days';`
 3. Testar em build de produção (`npm run build && npm start`) — o SW não existe em dev.
 
+## Servidor MCP (assistentes de IA)
+
+- URL do conector: `{APP_URL}/api/mcp` (Ajustes → "Assistentes de IA" mostra e copia; lista e revoga conexões). Funciona como conector remoto no Claude/ChatGPT e no Claude Code (`claude mcp add --transport http daily-chores {APP_URL}/api/mcp`).
+- Fluxo: 401 com `WWW-Authenticate … resource_metadata` → cliente lê `/.well-known/oauth-protected-resource/api/mcp` → AS em `/.well-known/oauth-authorization-server` → `POST /api/oauth/register` → `/oauth/authorize` (login Google + "Permitir") → `POST /api/oauth/token`. `redirect_uri`: https, ou http só em loopback (porta livre, RFC 8252).
+- Ferramentas: `list_tasks`, `get_day`, `get_stats`, `get_workout_history` (leitura); `create_task`, `update_task` (patch; `exercises` = lista COMPLETA com ids), `delete_task`, `set_task_state`, `log_exercise`. As `instructions` do servidor explicam o domínio ao modelo.
+- **Regra**: ferramenta nova chama um serviço de `lib/` (o mesmo das rotas REST) — se a lógica estiver dentro de uma rota, extraia para um serviço antes.
+- Dev: depois de mudar o schema, **reinicie o `next dev`** — o PrismaClient fica em `globalThis` e não enxerga modelos novos via HMR.
+
 ## Autenticação (gotchas)
 
-- `src/proxy.ts` (middleware) usa `authConfig` **edge-safe sem Prisma**; protege tudo exceto os caminhos públicos. As rotas de API validam sessão inline (`auth()` → `session.user.id`).
+- `src/proxy.ts` (middleware) usa `authConfig` **edge-safe sem Prisma**; protege tudo exceto os caminhos públicos (incl. `/api/mcp`, `/api/oauth/**`, `/.well-known/**`, que têm auth própria). Páginas sem sessão vão para `/login?callbackUrl=…` (só caminhos internos são aceitos). As rotas de API validam sessão inline (`auth()` → `session.user.id`).
 - **Gotcha Auth.js v5 beta**: o `user.id` dos callbacks NÃO é o googleSub — é um `crypto.randomUUID()`. O googleSub real vem em `profile.sub` / `account.providerAccountId`; o id do banco viaja no JWT como `token.uid` (com auto-recuperação para cookies antigos). Detalhes em `lib/auth-callbacks.ts` (testado em `auth-callbacks.test.ts`).
 - Endpoints internos (`/api/internal/*`): produção = OIDC (`verifyIdToken` audience `CLOUD_TASKS_AUDIENCE` + email da SA); dev = header `x-dev-token: $DEV_ALARM_TOKEN`.
 

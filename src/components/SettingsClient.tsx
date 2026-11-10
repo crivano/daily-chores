@@ -32,9 +32,11 @@ interface Props {
   timezone: string;
   timezoneDefaulted: boolean;
   vapidPublicKey: string | null;
+  /** Seção "Assistentes de IA" (renderizada no servidor, com os dados das conexões). */
+  aiSection?: React.ReactNode;
 }
 
-export function SettingsClient({ email, timezone, timezoneDefaulted, vapidPublicKey }: Props) {
+export function SettingsClient({ email, timezone, timezoneDefaulted, vapidPublicKey, aiSection }: Props) {
   const router = useRouter();
   const [tz, setTz] = useState(timezone);
   const [permission, setPermission] = useState<NotificationPermission | "unsupported" | "loading">("loading");
@@ -215,6 +217,8 @@ export function SettingsClient({ email, timezone, timezoneDefaulted, vapidPublic
           </p>
         )}
       </section>
+
+      {aiSection}
 
       <section className={card}>
         <h2 className="font-semibold">Instalar o app (PWA)</h2>

@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import type { DayTaskDTO } from "@/lib/domain/day";
 import { STATE_META, nextStateAllowed, type TaskState } from "@/lib/domain/states";
+import { WorkoutExercises, type ExerciseMutation } from "./WorkoutExercises";
 
 interface Props {
   task: DayTaskDTO;
@@ -11,6 +12,10 @@ interface Props {
   onSetState: (next: TaskState) => Promise<boolean>;
   /** Ajusta a hora de conclusão ("HH:mm" local do dia); false = falhou. */
   onSetTime: (hhmm: string) => Promise<boolean>;
+  /** Séries: marca/ajusta um exercício; false = falhou. */
+  onMutateExercise?: (exerciseId: string, m: ExerciseMutation) => Promise<boolean>;
+  /** O dia exibido é hoje (ajustes de exercício viram o novo plano). */
+  today?: boolean;
 }
 
 /** Ícone do estado (28px) — círculo, check, proibido ou humor. */
@@ -71,11 +76,15 @@ function StateIcon({ state }: { state: TaskState }) {
  * largura fixa e fica sempre à esquerda, os horários ficam alinhados no fim
  * das linhas.
  */
-export function TaskRow({ task, onSetState, onSetTime }: Props) {
+export function TaskRow({ task, onSetState, onSetTime, onMutateExercise, today = true }: Props) {
   const [error, setError] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  // Série de exercícios: tocar na linha abre/fecha a lista; o ícone de estado
+  // vira um botão próprio (ciclo de estados continua disponível — ex.: Bomba).
+  const workout = task.workout;
+  const [open, setOpen] = useState(false);
 
   const meta = STATE_META[task.state];
   // Ciclo da linha pula estados não permitidos para ESTA tarefa (null = todas,
@@ -115,31 +124,72 @@ export function TaskRow({ task, onSetState, onSetTime }: Props) {
     else flashError();
   }
 
+  const rowAction = workout ? () => setOpen((o) => !o) : cycle;
+  const rowLabel = workout
+    ? `${task.name}: ${workout.done} de ${workout.total} exercícios — toque para ${open ? "fechar" : "ver"} a lista`
+    : `${task.name}: ${cycleLabel}`;
+
   return (
-    <li className="relative">
+    <li className={`relative ${workout ? "rounded-2xl bg-white shadow-sm dark:bg-zinc-800" : ""}`}>
       <div
         role="button"
         tabIndex={0}
-        aria-label={`${task.name}: ${cycleLabel}`}
-        title={cycleLabel}
-        onClick={cycle}
+        aria-label={rowLabel}
+        aria-expanded={workout ? open : undefined}
+        title={workout ? undefined : cycleLabel}
+        onClick={rowAction}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            cycle();
+            rowAction();
           }
         }}
         className={`flex min-h-16 w-full cursor-pointer items-center gap-3 rounded-2xl bg-white p-4 text-left shadow-sm transition active:scale-[0.99] dark:bg-zinc-800 ${
-          task.state !== "NONE" ? "opacity-50" : ""
-        }`}
+          task.state !== "NONE" && !open ? "opacity-50" : ""
+        } ${workout ? "shadow-none" : ""}`}
       >
-        <StateIcon state={task.state} />
+        {workout ? (
+          <button
+            type="button"
+            aria-label={`${task.name}: ${cycleLabel}`}
+            title={cycleLabel}
+            onClick={(e) => {
+              e.stopPropagation();
+              cycle();
+            }}
+            onKeyDown={(e) => e.stopPropagation()}
+            className="-m-1 rounded-xl p-1 transition active:scale-95"
+          >
+            <StateIcon state={task.state} />
+          </button>
+        ) : (
+          <StateIcon state={task.state} />
+        )}
         <span className="flex min-w-0 flex-1 flex-col">
           <span className={`truncate font-medium ${meta.conclusive || task.state === "CANCELLED" ? "line-through" : ""}`}>
             {task.name}
           </span>
           {task.note && (
             <span className="truncate text-xs text-zinc-500 dark:text-zinc-400">{task.note}</span>
+          )}
+          {workout && (
+            <span className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+              <span className="tabular-nums">
+                {workout.done}/{workout.total} exercícios
+              </span>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2.5}
+                className={`h-3.5 w-3.5 transition ${open ? "rotate-180" : ""}`}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </span>
           )}
         </span>
 
@@ -228,6 +278,11 @@ export function TaskRow({ task, onSetState, onSetTime }: Props) {
           </span>
         )}
       </div>
+      {workout && open && onMutateExercise && (
+        <div className="px-3 pb-3">
+          <WorkoutExercises workout={workout} today={today} onMutate={onMutateExercise} />
+        </div>
+      )}
       {error && (
         <span className="pointer-events-none absolute -top-2 left-1/2 z-10 -translate-x-1/2 rounded-full bg-red-600 px-3 py-1 text-xs font-medium text-white shadow">
           Não foi possível salvar

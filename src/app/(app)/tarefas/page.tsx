@@ -14,6 +14,7 @@ export default async function TarefasPage() {
   const tasks = await prisma.task.findMany({
     where: { userId },
     orderBy: { createdAt: "asc" },
+    include: { exercises: { where: { archivedAt: null }, orderBy: { position: "asc" } } },
   });
   return <TasksManager tasks={buildTaskDTOs(tasks)} />;
 }

@@ -3,11 +3,23 @@ import { auth, signIn } from "@/lib/auth";
 
 export const metadata = { title: "Entrar" };
 
-export default async function LoginPage() {
+/** Destino pós-login: só caminhos internos ("/x", nunca "//host" ou URL absoluta). */
+function safeCallback(raw: string | string[] | undefined): string {
+  return typeof raw === "string" && raw.startsWith("/") && !raw.startsWith("//") && !raw.startsWith("/\\")
+    ? raw
+    : "/";
+}
+
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const callbackUrl = safeCallback((await searchParams).callbackUrl);
   const session = await auth();
   // Só considera "logado" quando a identidade foi resolvida (session.user.id),
   // evitando loop com sessões órfãs (usuário removido / cookie antigo).
-  if (session?.user?.id) redirect("/");
+  if (session?.user?.id) redirect(callbackUrl);
 
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center gap-10 px-6">
@@ -28,7 +40,7 @@ export default async function LoginPage() {
       <form
         action={async () => {
           "use server";
-          await signIn("google", { redirectTo: "/" });
+          await signIn("google", { redirectTo: callbackUrl });
         }}
       >
         <button

@@ -71,6 +71,8 @@ export function TasksManager({ tasks }: { tasks: TaskDTO[] }) {
           </p>
           <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
             {recurrenceLabel(task)} · {timeRuleLabel(task, anchorName)}
+            {task.kind === "WORKOUT" &&
+              ` · ${task.exercises.length} exercício${task.exercises.length === 1 ? "" : "s"}`}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1">

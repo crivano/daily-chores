@@ -1,6 +1,37 @@
-import type { Task } from "@/generated/prisma/client";
+import type { Exercise, Task } from "@/generated/prisma/client";
 import { normalizeAllowedStates, type TaskState } from "./domain/states";
+import type { LoadUnit, TaskKind } from "./domain/workout";
 import { timeToMinutes } from "./format";
+
+/** Exercício (plano atual) de uma série — só os ativos, na ordem de exibição. */
+export interface TaskExerciseDTO {
+  id: string;
+  name: string;
+  sets: number | null;
+  reps: number | null;
+  durationSec: number | null;
+  load: number | null;
+  loadUnit: LoadUnit;
+  restSec: number | null;
+  notes: string | null;
+}
+
+export function exerciseToDTO(e: Exercise): TaskExerciseDTO {
+  return {
+    id: e.id,
+    name: e.name,
+    sets: e.sets,
+    reps: e.reps,
+    durationSec: e.durationSec,
+    load: e.load,
+    loadUnit: e.loadUnit === "lb" ? "lb" : "kg",
+    restSec: e.restSec,
+    notes: e.notes,
+  };
+}
+
+/** Tarefa com os exercícios carregados (arquivados são filtrados no DTO). */
+export type TaskWithExercises = Task & { exercises?: Exercise[] };
 
 /** Tarefa serializável para ilhas client (sem tipos do Prisma). */
 export interface TaskDTO {
@@ -14,10 +45,13 @@ export interface TaskDTO {
   anchorId: string | null;
   offsetMinutes: number | null;
   allowedStates: TaskState[] | null; // null = sem restrição (todos)
+  kind: TaskKind;
+  exercises: TaskExerciseDTO[]; // ativos, por position (vazio em SIMPLE)
   dependents: { id: string; name: string }[];
 }
 
-export function taskToDTO(task: Task, dependents: { id: string; name: string }[]): TaskDTO {
+export function taskToDTO(task: TaskWithExercises, dependents: { id: string; name: string }[]): TaskDTO {
+  const kind: TaskKind = task.kind === "WORKOUT" ? "WORKOUT" : "SIMPLE";
   return {
     id: task.id,
     name: task.name,
@@ -29,6 +63,14 @@ export function taskToDTO(task: Task, dependents: { id: string; name: string }[]
     anchorId: task.anchorId,
     offsetMinutes: task.offsetMinutes,
     allowedStates: normalizeAllowedStates(task.allowedStates),
+    kind,
+    exercises:
+      kind === "WORKOUT"
+        ? (task.exercises ?? [])
+            .filter((e) => e.archivedAt == null)
+            .sort((a, b) => a.position - b.position)
+            .map(exerciseToDTO)
+        : [],
     dependents,
   };
 }
@@ -59,7 +101,7 @@ export function compareTaskDTOs(a: TaskDTO, b: TaskDTO): number {
 }
 
 /** Constrói os DTOs com a lista de dependentes de cada tarefa. */
-export function buildTaskDTOs(tasks: Task[]): TaskDTO[] {
+export function buildTaskDTOs(tasks: TaskWithExercises[]): TaskDTO[] {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const dependents = new Map<string, { id: string; name: string }[]>();
   for (const t of tasks) {

@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import { ProgressRing } from "./ProgressRing";
 import { TaskRow } from "./TaskRow";
+import type { ExerciseMutation } from "./WorkoutExercises";
 import { DAY_CHANGED_EVENT } from "@/lib/clientEvents";
 import { readDayCache, writeDayCache } from "@/lib/dayCache";
 import type { DayPayload, DayTaskDTO } from "@/lib/domain/day";
@@ -473,6 +474,43 @@ export function DayBoard({ userId }: { userId: string }) {
     }
   }
 
+  /**
+   * Série: marca/desmarca ou ajusta valores de um exercício — otimista, sem
+   * debounce (um POST por toque). A resposta traz o dia inteiro: conclusão
+   * automática da série e shifts de cadeia já refletidos.
+   */
+  async function mutateExercise(taskId: string, exerciseId: string, m: ExerciseMutation): Promise<boolean> {
+    const prev = dayRef.current;
+    if (!prev) return false;
+    const patch = (t: DayTaskDTO): DayTaskDTO => {
+      if (t.taskId !== taskId || !t.workout) return t;
+      const exercises = t.workout.exercises.map((e) =>
+        e.exerciseId !== exerciseId ? e : { ...e, ...(m.values ?? {}), ...(m.done !== undefined ? { done: m.done } : {}) },
+      );
+      const done = exercises.filter((e) => e.done && !e.archived).length;
+      return { ...t, workout: { ...t.workout, exercises, done } };
+    };
+    commitDay({
+      ...prev,
+      tasks: { timed: prev.tasks.timed.map(patch), timeless: prev.tasks.timeless.map(patch) },
+    });
+
+    try {
+      const res = await fetch("/api/exercises/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exerciseId, date: prev.date, ...m }),
+      });
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; day?: DayPayload } | null;
+      if (!res.ok || !json?.day) throw new Error();
+      applyServerDay(json.day);
+      return true;
+    } catch {
+      commitDay(prev);
+      return false;
+    }
+  }
+
   if (!day) {
     if (loadError) {
       return (
@@ -636,6 +674,8 @@ export function DayBoard({ userId }: { userId: string }) {
                 task={t}
                 onSetState={(status) => mutateState(t.taskId, status)}
                 onSetTime={(time) => mutateTime(t.taskId, time)}
+                onMutateExercise={(exerciseId, m) => mutateExercise(t.taskId, exerciseId, m)}
+                today={day.today}
               />
             ))}
           </ul>
@@ -652,6 +692,8 @@ export function DayBoard({ userId }: { userId: string }) {
                     task={t}
                     onSetState={(status) => mutateState(t.taskId, status)}
                     onSetTime={(time) => mutateTime(t.taskId, time)}
+                    onMutateExercise={(exerciseId, m) => mutateExercise(t.taskId, exerciseId, m)}
+                    today={day.today}
                   />
                 ))}
               </ul>

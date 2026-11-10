@@ -6,7 +6,7 @@
 import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
 
-import type { DayPayload, DayTaskDTO } from "./domain/day";
+import type { DayExerciseDTO, DayPayload, DayTaskDTO, DayWorkoutDTO } from "./domain/day";
 import {
   DEFAULT_TZ,
   dateInTZ,
@@ -49,6 +49,51 @@ export async function getDayPayload(userId: string, requested?: string | null): 
 
   const timeOf = (d: Date) => formatInTimeZone(d, tz, "HH:mm");
 
+  const dueTasks = allTasks.filter((t) => t.active && due(t, D));
+
+  // Séries de exercícios devidas no dia: exercícios (inclui arquivados — só
+  // aparecem se registrados no dia) + registros do dia.
+  const workoutIds = dueTasks.filter((t) => t.kind === "WORKOUT").map((t) => t.id);
+  const [exercises, exerciseLogs] = workoutIds.length
+    ? await Promise.all([
+        prisma.exercise.findMany({ where: { taskId: { in: workoutIds } }, orderBy: { position: "asc" } }),
+        prisma.exerciseLog.findMany({ where: { taskId: { in: workoutIds }, localDate: D } }),
+      ])
+    : [[], []];
+  const logByExercise = new Map(exerciseLogs.map((l) => [l.exerciseId, l]));
+
+  const workoutOf = (taskId: string): DayWorkoutDTO => {
+    const list: DayExerciseDTO[] = [];
+    let done = 0;
+    let total = 0;
+    for (const e of exercises) {
+      if (e.taskId !== taskId) continue;
+      const log = logByExercise.get(e.id);
+      const archived = e.archivedAt != null;
+      if (archived && !log) continue;
+      if (!archived) {
+        total += 1;
+        if (log) done += 1;
+      }
+      const v = log ?? e;
+      list.push({
+        exerciseId: e.id,
+        name: e.name,
+        sets: v.sets,
+        reps: v.reps,
+        durationSec: v.durationSec,
+        load: v.load,
+        loadUnit: v.loadUnit === "lb" ? "lb" : "kg",
+        restSec: e.restSec,
+        notes: e.notes,
+        done: log != null,
+        doneAtLabel: log ? timeOf(log.doneAt) : null,
+        archived,
+      });
+    }
+    return { exercises: list, done, total };
+  };
+
   const toDTO = (task: TaskLike, eff: Date | undefined, note?: string): DayTaskDTO => {
     const c = complByTask.get(task.id);
     return {
@@ -60,10 +105,9 @@ export async function getDayPayload(userId: string, requested?: string | null): 
       timeLabel: eff ? timeOf(eff) : undefined,
       note,
       allowedStates: normalizeAllowedStates(task.allowedStates),
+      ...(task.kind === "WORKOUT" ? { workout: workoutOf(task.id) } : {}),
     };
   };
-
-  const dueTasks = allTasks.filter((t) => t.active && due(t, D));
 
   const timed = dueTasks
     .filter((t) => t.time)
