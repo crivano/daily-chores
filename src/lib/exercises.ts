@@ -95,11 +95,13 @@ function valuesOf(e: { sets: number | null; reps: number | null; durationSec: nu
 
 /**
  * Instante de um registro novo: hoje → agora; dia passado → horário nominal da
- * tarefa (ou 23:59 local se sem hora) — mesma regra de POST /api/completions,
- * para não criar shifts absurdos nas cadeias do dia ajustado.
+ * tarefa (ou 23:59 local se sem hora); dia futuro → nominal (ou agora se sem
+ * hora) — mesma regra de POST /api/completions, para não criar shifts absurdos
+ * nas cadeias do dia ajustado/adiantado.
  */
 function defaultDoneAt(task: Task, localDate: string, todayD: string, tz: string): Date {
-  if (localDate >= todayD) return new Date();
+  if (localDate === todayD) return new Date();
+  if (localDate > todayD) return nominal(task, localDate, tz) ?? new Date();
   return nominal(task, localDate, tz) ?? fromZonedTime(`${localDate}T23:59:00`, tz);
 }
 
@@ -198,7 +200,7 @@ export async function setExerciseLog(args: {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   const tz = user?.timezone ?? DEFAULT_TZ;
   const todayD = dateInTZ(new Date(), tz);
-  const localDate = args.date && isValidLocalDate(args.date) && args.date <= todayD ? args.date : todayD;
+  const localDate = args.date && isValidLocalDate(args.date) ? args.date : todayD;
 
   const taskId = task.id;
   const [active, logsBefore] = await Promise.all([

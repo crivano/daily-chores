@@ -28,6 +28,12 @@ const STATE_DEBOUNCE_MS = 500;
 /** Arrasto para baixo (px) que dispara a recarga no puxar-para-baixo. */
 const PULL_REFRESH_THRESHOLD = 90;
 
+/** Arrasto horizontal (px) que troca de dia (esquerda = próximo, direita = anterior). */
+const SWIPE_DAY_THRESHOLD = 70;
+
+/** Alvos onde o arrasto horizontal não troca de dia (campos de texto, diálogos). */
+const SWIPE_IGNORE_SELECTOR = "input, textarea, select, [contenteditable], [role=dialog], [data-swipe-ignore]";
+
 /** Burst de mudanças de estado de uma tarefa esperando o debounce. */
 interface PendingState {
   timer: ReturnType<typeof setTimeout> | null; // null = nada agendado
@@ -84,6 +90,9 @@ function mergePendingStates(day: DayPayload, pending: Map<string, PendingState>)
  * ao trocar de data, quando outra ilha muta o dia (evento global), quando um
  * push chega com a aba aberta e no gesto de puxar-para-baixo (celular), que
  * força a recarga.
+ *
+ * Navegação entre dias: setas do cabeçalho, arrastar na horizontal (celular)
+ * ou ←/→ no teclado. Dias futuros são navegáveis para adiantar tarefas.
  */
 export function DayBoard({ userId }: { userId: string }) {
   // ?d= resolvido no inicializador (SSR não tem window → hoje). O primeiro
@@ -270,10 +279,13 @@ export function DayBoard({ userId }: { userId: string }) {
     };
   }, [handleTick]);
 
-  // ---- Puxar-para-baixo (celular): recarga manual, no lugar do polling -----
-  // O indicador é pintado direto no DOM (refs) para não re-renderizar a lista
-  // a cada touchmove; `refreshing` vive em ref porque os listeners são do window.
+  // ---- Gestos de toque (celular) ------------------------------------------
+  // Puxar-para-baixo = recarga manual (no lugar do polling); arrastar na
+  // horizontal = troca de dia. O indicador e o deslocamento do conteúdo são
+  // pintados direto no DOM (refs) para não re-renderizar a lista a cada
+  // touchmove; `refreshing` vive em ref porque os listeners são do window.
 
+  const swipeBoxRef = useRef<HTMLDivElement>(null);
   const pullBoxRef = useRef<HTMLDivElement>(null);
   const pullArrowRef = useRef<SVGSVGElement>(null);
   const pullSpinRef = useRef<SVGSVGElement>(null);
@@ -305,12 +317,43 @@ export function DayBoard({ userId }: { userId: string }) {
     }
   }, [load, paintPull]);
 
+  /** Desloca o conteúdo do dia durante o arrasto horizontal (sem transição). */
+  const paintSwipe = useCallback((dx: number) => {
+    const box = swipeBoxRef.current;
+    if (!box) return;
+    box.style.transition = "none";
+    box.style.transform = dx ? `translateX(${dx}px)` : "";
+    box.style.opacity = dx ? String(1 - Math.min(0.5, Math.abs(dx) / 500)) : "";
+  }, []);
+
+  /** Volta o conteúdo ao lugar; `from` ≠ 0 = entra deslizando daquele lado (dia novo). */
+  const settleSwipe = useCallback((from: number) => {
+    const box = swipeBoxRef.current;
+    if (!box) return;
+    if (from) {
+      box.style.transition = "none";
+      box.style.transform = `translateX(${from}px)`;
+      box.style.opacity = "0";
+    }
+    // Dois frames: o navegador precisa pintar a posição inicial antes da transição.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        box.style.transition = "transform 200ms ease-out, opacity 200ms ease-out";
+        box.style.transform = "";
+        box.style.opacity = "";
+      }),
+    );
+  }, []);
+
   useEffect(() => {
     let touchId = -1;
     let startX = 0;
     let startY = 0;
+    let lastDx = 0;
     let lastDy = 0;
-    let engaged = false;
+    let canPull = false;
+    let canSwipe = false;
+    let mode: "pull" | "swipe" | null = null;
 
     const touchById = (touches: TouchList) => {
       for (let i = 0; i < touches.length; i += 1) {
@@ -320,17 +363,26 @@ export function DayBoard({ userId }: { userId: string }) {
     };
 
     const onTouchStart = (e: TouchEvent) => {
-      engaged = false;
+      mode = null;
+      lastDx = 0;
       lastDy = 0;
-      // Só engata no topo da página, com um dedo, fora dos overlays fixos
-      // (bottom nav — data-pull-ignore) e sem recarga em andamento.
+      const target = e.target as Element | null;
+      // Um dedo, com o dia na tela, fora dos overlays fixos (bottom nav —
+      // data-pull-ignore) e sem recarga em andamento.
       if (
         e.touches.length !== 1 ||
         refreshingRef.current ||
-        window.scrollY > 0 ||
         !dayRef.current ||
-        (e.target as Element | null)?.closest?.("[data-pull-ignore]")
+        target?.closest?.("[data-pull-ignore]")
       ) {
+        touchId = -1;
+        return;
+      }
+      // Pull só no topo da página; swipe em qualquer altura, exceto sobre
+      // campos (o arrasto ali é seleção de texto/cursor).
+      canPull = window.scrollY <= 0;
+      canSwipe = !target?.closest?.(SWIPE_IGNORE_SELECTOR);
+      if (!canPull && !canSwipe) {
         touchId = -1;
         return;
       }
@@ -345,16 +397,25 @@ export function DayBoard({ userId }: { userId: string }) {
       if (!t) return;
       const dx = t.clientX - startX;
       const dy = t.clientY - startY;
-      if (!engaged) {
-        // Descendo e mais vertical que horizontal = pull; subiu ou foi para o
-        // lado = scroll/swipe comum, devolve o gesto ao navegador.
-        if (dy > 8 && dy >= Math.abs(dx)) engaged = true;
-        else if (dy < -8 || Math.abs(dx) > 8) touchId = -1;
-        if (!engaged) return;
+      if (!mode) {
+        // Descendo e mais vertical que horizontal = pull; claramente horizontal
+        // = troca de dia; qualquer outra coisa (subir, diagonal) é scroll
+        // comum e o gesto volta ao navegador.
+        if (canPull && dy > 8 && dy >= Math.abs(dx)) mode = "pull";
+        else if (canSwipe && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.2) mode = "swipe";
+        else if (Math.abs(dy) > 8 || Math.abs(dx) > 10) touchId = -1;
+        if (!mode) return;
+      }
+      if (mode === "swipe") {
+        // Não-passivo: trava o scroll vertical enquanto arrasta o dia.
+        e.preventDefault();
+        lastDx = dx;
+        paintSwipe(dx * 0.6); // resistência
+        return;
       }
       if (dy <= 0) {
         // Voltou acima do ponto de partida: encerra e devolve ao scroll.
-        engaged = false;
+        mode = null;
         paintPull(0, false);
         return;
       }
@@ -367,19 +428,29 @@ export function DayBoard({ userId }: { userId: string }) {
 
     const onTouchEnd = (e: TouchEvent) => {
       if (touchId < 0) return;
-      const ended = touchById(e.changedTouches) !== null;
-      const wasEngaged = engaged;
-      const dy = lastDy;
+      if (touchById(e.changedTouches) === null) return; // outro dedo saiu
+      const was = mode;
       touchId = -1;
-      engaged = false;
-      if (!ended || !wasEngaged) return;
-      if (dy >= PULL_REFRESH_THRESHOLD) void triggerRefresh();
-      else paintPull(0, false);
+      mode = null;
+      if (was === "swipe") {
+        if (Math.abs(lastDx) >= SWIPE_DAY_THRESHOLD) {
+          // Esquerda → próximo dia, entrando pela direita (e vice-versa).
+          navRef.current(lastDx < 0 ? 1 : -1);
+          settleSwipe(lastDx < 0 ? 48 : -48);
+        } else {
+          settleSwipe(0);
+        }
+      } else if (was === "pull") {
+        if (lastDy >= PULL_REFRESH_THRESHOLD) void triggerRefresh();
+        else paintPull(0, false);
+      }
     };
 
     const onTouchCancel = () => {
+      const was = mode;
       touchId = -1;
-      engaged = false;
+      mode = null;
+      if (was === "swipe") settleSwipe(0);
       if (!refreshingRef.current) paintPull(0, false);
     };
 
@@ -393,20 +464,38 @@ export function DayBoard({ userId }: { userId: string }) {
       window.removeEventListener("touchend", onTouchEnd);
       window.removeEventListener("touchcancel", onTouchCancel);
     };
-  }, [triggerRefresh, paintPull]);
+  }, [triggerRefresh, paintPull, paintSwipe, settleSwipe]);
 
-  /** Navega ±1 dia; ▶ desabilita em "hoje". URL acompanha sem round-trip.
+  /** Navega ±1 dia (passado ou futuro). URL acompanha sem round-trip.
    *  Só muda o estado — o effect de [viewD] lê o cache e dispara o fetch. */
   function navigate(delta: 1 | -1) {
     const base = viewD ?? day?.date;
     const todayD = day?.todayDate;
     if (!base || !todayD) return;
     const target = addDays(base, delta);
-    if (target > todayD) return;
     const isToday = target === todayD;
     setViewD(isToday ? null : target);
     window.history.replaceState(null, "", isToday ? "/" : `/?d=${target}`);
   }
+
+  // Versão estável para os listeners de gesto/teclado (navigate muda a cada render).
+  const navRef = useRef(navigate);
+  useEffect(() => {
+    navRef.current = navigate;
+  });
+
+  // ←/→ no teclado trocam o dia (desktop), exceto digitando num campo.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      if ((e.target as Element | null)?.closest?.(SWIPE_IGNORE_SELECTOR)) return;
+      e.preventDefault();
+      navRef.current(e.key === "ArrowRight" ? 1 : -1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   function goToday() {
     setViewD(null);
@@ -548,7 +637,7 @@ export function DayBoard({ userId }: { userId: string }) {
     );
   }
 
-  const isPast = day.date < day.todayDate;
+  const isFuture = day.date > day.todayDate;
 
   // Indicador do puxar-para-baixo: posição/estado são pintados via refs no
   // efeito do gesto (dayRef guarda o payload; aqui só o markup fixo no topo).
@@ -589,6 +678,8 @@ export function DayBoard({ userId }: { userId: string }) {
   return (
     <>
       {pullIndicator}
+      {/* Alvo do arrasto horizontal (transform/opacity pintados via ref). */}
+      <div ref={swipeBoxRef}>
       <header className="mb-6 flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1">
@@ -608,9 +699,8 @@ export function DayBoard({ userId }: { userId: string }) {
             <button
               type="button"
               onClick={() => navigate(1)}
-              disabled={!isPast}
-              aria-label={isPast ? "Próximo dia" : "Você está no dia de hoje"}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 active:scale-[0.98] disabled:opacity-30 disabled:hover:bg-transparent dark:text-zinc-400 dark:hover:bg-zinc-700 dark:disabled:hover:bg-transparent"
+              aria-label="Próximo dia"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 active:scale-[0.98] dark:text-zinc-400 dark:hover:bg-zinc-700"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="h-5 w-5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="m9 18 6-6-6-6" />
@@ -632,14 +722,21 @@ export function DayBoard({ userId }: { userId: string }) {
                 : `${day.concluded} de ${day.total} concluídas`}
             {day.cancelled > 0 && ` · ${day.cancelled} cancelada${day.cancelled > 1 ? "s" : ""}`}
           </p>
-          {isPast && (
-            <button
-              type="button"
-              onClick={goToday}
-              className="mt-2 flex h-7 items-center rounded-full bg-indigo-50 px-3 text-xs font-semibold text-indigo-700 transition active:scale-[0.98] dark:bg-indigo-500/15 dark:text-indigo-300"
-            >
-              Voltar para hoje
-            </button>
+          {!day.today && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={goToday}
+                className="flex h-7 items-center rounded-full bg-indigo-50 px-3 text-xs font-semibold text-indigo-700 transition active:scale-[0.98] dark:bg-indigo-500/15 dark:text-indigo-300"
+              >
+                Voltar para hoje
+              </button>
+              {isFuture && (
+                <span className="text-xs font-medium text-amber-600 dark:text-amber-400">
+                  Dia futuro — marcações adiantam a tarefa
+                </span>
+              )}
+            </div>
           )}
         </div>
         <ProgressRing done={day.concluded} total={day.total} />
@@ -701,6 +798,7 @@ export function DayBoard({ userId }: { userId: string }) {
           )}
         </>
       )}
+      </div>
     </>
   );
 }

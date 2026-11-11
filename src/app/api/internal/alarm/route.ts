@@ -43,7 +43,13 @@ export async function POST(req: Request) {
   });
   const complByTask = new Map(completions.map((c) => [c.taskId, c]));
 
-  if (complByTask.has(task.id)) return discard("completed");
+  if (complByTask.has(task.id)) {
+    // Marcada antes do disparo — inclusive adiantada em dia futuro, quando
+    // nenhum sync rodou depois da marcação: agenda a próxima ocorrência aqui,
+    // senão ela só voltaria à fila no reconcile diário.
+    await syncAlarms(task.id).catch((err) => console.error("[sync] pós-descarte", err));
+    return discard("completed");
+  }
   const eff = effectiveAt(task, localDate, tz, complByTask, tasksById);
   if (!eff) return discard("no-effective");
 

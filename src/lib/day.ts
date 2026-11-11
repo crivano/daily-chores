@@ -30,15 +30,15 @@ function stateOf(taskId: string, complByTask: CompletionsByTask): TaskState {
 }
 
 /**
- * Payload completo do dia `requested` ("YYYY-MM-DD"). Ausente/inválido/futuro →
- * hoje no fuso do usuário.
+ * Payload completo do dia `requested` ("YYYY-MM-DD"). Ausente/inválido → hoje no
+ * fuso do usuário. Dias futuros são válidos (adiantar tarefas).
  */
 export async function getDayPayload(userId: string, requested?: string | null): Promise<DayPayload> {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   const tz = user?.timezone ?? DEFAULT_TZ;
   const now = new Date();
   const todayD = dateInTZ(now, tz);
-  const D = requested && isValidLocalDate(requested) && requested <= todayD ? requested : todayD;
+  const D = requested && isValidLocalDate(requested) ? requested : todayD;
 
   const [allTasks, completions] = await Promise.all([
     prisma.task.findMany({ where: { userId } }),

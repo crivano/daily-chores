@@ -2,7 +2,7 @@ import { auth } from "@/lib/auth";
 import { getDayPayload } from "@/lib/day";
 
 /**
- * GET /api/day?d=YYYY-MM-DD — payload do dia (hoje se ausente/inválido/futuro).
+ * GET /api/day?d=YYYY-MM-DD — payload do dia (hoje se ausente/inválido; futuro permitido).
  * Alimenta o DayBoard no client (cache localStorage stale-while-revalidate).
  */
 export async function GET(req: Request) {

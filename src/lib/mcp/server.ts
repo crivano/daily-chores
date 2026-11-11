@@ -27,7 +27,7 @@ Conceitos:
 - Tarefa relativa: anchorTaskId aponta para outra tarefa. Com time, a âncora também precisa ter hora e o atraso da âncora desloca a dependente. Sem time, offsetMinutes (≥ 0) é obrigatório: notifica X min após a âncora ser concluída. A cadeia inteira precisa ter a mesma recorrência; ciclos são proibidos; não dá para excluir uma âncora com dependentes.
 - Estados do dia: NONE (não marcado), DONE (feito), CANCELLED (cancelado — silencia mas não conta), HAPPY/INDIFFERENT/SAD (feito com humor), BOMB (falha registrada, ex.: estourou a dieta). allowedStates restringe os estados marcáveis (null/[] = todos).
 - Séries de exercícios: kind "WORKOUT" com lista de exercícios (sets, reps, durationSec, load + loadUnit kg|lb, restSec, notes). Marcar o último exercício do dia conclui a tarefa automaticamente. Ajustar valores de um exercício HOJE muda o plano dos próximos treinos.
-- Datas são "YYYY-MM-DD" no fuso do usuário; nunca no futuro para marcações. list_tasks e get_day informam a data de hoje.
+- Datas são "YYYY-MM-DD" no fuso do usuário; marcações valem para dias passados (correção) e futuros (adiantar). list_tasks e get_day informam a data de hoje.
 
 Boas práticas: consulte list_tasks antes de criar/alterar (para obter ids e evitar duplicatas); confirme com o usuário antes de excluir tarefas; em update_task com exercises, envie a lista COMPLETA (com o id dos exercícios mantidos — omitidos são arquivados).`;
 
@@ -118,7 +118,7 @@ export function buildMcpServer(userId: string): McpServer {
       title: "Ver o dia",
       description:
         "Tarefas devidas em um dia (hoje por padrão) com o estado de cada uma, horários previstos/executados, progresso e, nas séries, os exercícios marcados.",
-      inputSchema: z.object({ date: DATE.optional().describe("Dia YYYY-MM-DD (padrão: hoje; futuro vira hoje).") }),
+      inputSchema: z.object({ date: DATE.optional().describe("Dia YYYY-MM-DD (padrão: hoje; passado ou futuro).") }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ date }) => json(await getDayPayload(userId, date ?? null)),
@@ -212,7 +212,7 @@ export function buildMcpServer(userId: string): McpServer {
     {
       title: "Marcar tarefa",
       description:
-        "Marca o estado de uma tarefa num dia (hoje por padrão; dias passados permitidos, futuro não). NONE desmarca. time (HH:mm) registra a hora da execução; sem state, só corrige a hora de um registro existente. Retorna o dia atualizado.",
+        "Marca o estado de uma tarefa num dia (hoje por padrão; dias passados e futuros permitidos — futuro = adiantar). NONE desmarca. time (HH:mm) registra a hora da execução; sem state, só corrige a hora de um registro existente. Retorna o dia atualizado.",
       inputSchema: z.object({
         taskId: z.string(),
         state: z.enum(["NONE", ...STATE_VALUES]).optional().describe("Novo estado."),

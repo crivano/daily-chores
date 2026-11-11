@@ -15,10 +15,14 @@ export const HHMM = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
  * Instante padrão de um registro novo sem hora informada:
  * - hoje → agora (comportamento clássico);
  * - dia passado → horário nominal da tarefa (ou 23:59 local se sem hora), para
- *   não gerar shifts absurdos (+25h) nas cadeias do dia ajustado.
+ *   não gerar shifts absurdos (+25h) nas cadeias do dia ajustado;
+ * - dia futuro (adiantamento) → horário nominal (shift 0: dependentes com hora
+ *   seguem no nominal delas); sem hora → agora, o clique real — o instante fica
+ *   antes do dia, então dependentes sem hora daquela âncora não alarmam.
  */
 function defaultCompletedAt(task: TaskLike, localDate: string, todayD: string, tz: string): Date {
-  if (localDate >= todayD) return new Date();
+  if (localDate === todayD) return new Date();
+  if (localDate > todayD) return nominal(task, localDate, tz) ?? new Date();
   return nominal(task, localDate, tz) ?? fromZonedTime(`${localDate}T23:59:00`, tz);
 }
 
@@ -32,7 +36,9 @@ export type SetCompletionResult =
  * - time ("HH:mm"): ajusta completedAt para essa hora local. Sem status,
  *   apenas ajusta a hora de um registro existente. Mudar só o estado preserva
  *   a hora; registro novo sem time usa "agora" (ou o nominal, em dia passado).
- * - date: "YYYY-MM-DD" para dias anteriores (futuro/inválido → hoje).
+ * - date: "YYYY-MM-DD" de qualquer dia — passado (correção) ou futuro
+ *   (adiantamento); inválido → hoje. Marcar um dia futuro não mexe na fila: o
+ *   alarme daquele dia é descartado no disparo ("completed") e re-sincroniza.
  */
 export async function setCompletion(args: {
   userId: string;
@@ -56,7 +62,7 @@ export async function setCompletion(args: {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   const tz = user?.timezone ?? DEFAULT_TZ;
   const todayD = dateInTZ(new Date(), tz);
-  const localDate = args.date && isValidLocalDate(args.date) && args.date <= todayD ? args.date : todayD;
+  const localDate = args.date && isValidLocalDate(args.date) ? args.date : todayD;
 
   if (status === "NONE") {
     await prisma.completion.deleteMany({ where: { taskId, localDate } });
