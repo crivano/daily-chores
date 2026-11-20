@@ -52,7 +52,7 @@ export async function updateTask(userId: string, id: string, body: TaskBody): Pr
   const updated = await prisma.$transaction(async (tx) => {
     await tx.task.update({ where: { id }, data: result.data });
     if (exercises.data) {
-      await saveExercises(tx, id, exercises.data);
+      await saveExercises(tx, id, exercises.data, { recordChanges: true });
       await completeWorkoutAfterEdit(tx, id);
     }
     return tx.task.findUniqueOrThrow({ where: { id }, include: { exercises: true } });

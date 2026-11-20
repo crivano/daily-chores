@@ -26,7 +26,7 @@ Conceitos:
 - Tarefa recorrente: scheduleType "WEEKLY" (weekdays: 0=domingo … 6=sábado) ou "MONTHLY" (monthDay 1..31; meses sem o dia não ocorrem). time "HH:mm" opcional (sem hora = tarefa sem horário fixo). Notificação push no horário.
 - Tarefa relativa: anchorTaskId aponta para outra tarefa. Com time, a âncora também precisa ter hora e o atraso da âncora desloca a dependente. Sem time, offsetMinutes (≥ 0) é obrigatório: notifica X min após a âncora ser concluída. A cadeia inteira precisa ter a mesma recorrência; ciclos são proibidos; não dá para excluir uma âncora com dependentes.
 - Estados do dia: NONE (não marcado), DONE (feito), CANCELLED (cancelado — silencia mas não conta), HAPPY/INDIFFERENT/SAD (feito com humor), BOMB (falha registrada, ex.: estourou a dieta). allowedStates restringe os estados marcáveis (null/[] = todos).
-- Séries de exercícios: kind "WORKOUT" com lista de exercícios (sets, reps, durationSec, load + loadUnit kg|lb, restSec, notes). Marcar o último exercício do dia conclui a tarefa automaticamente. Ajustar valores de um exercício HOJE muda o plano dos próximos treinos.
+- Séries de exercícios: kind "WORKOUT" com lista de exercícios (sets, reps, durationSec, load + loadUnit kg|lb, restSec, notes). Marcar o último exercício do dia conclui a tarefa automaticamente. Ajustar valores de um exercício HOJE muda o plano dos próximos treinos. Todas as alterações feitas nos exercícios (cadastro ou ajustes no dia) ficam registradas com data/hora em get_workout_history (campo changes).
 - Datas são "YYYY-MM-DD" no fuso do usuário; marcações valem para dias passados (correção) e futuros (adiantar). list_tasks e get_day informam a data de hoje.
 
 Boas práticas: consulte list_tasks antes de criar/alterar (para obter ids e evitar duplicatas); confirme com o usuário antes de excluir tarefas; em update_task com exercises, envie a lista COMPLETA (com o id dos exercícios mantidos — omitidos são arquivados).`;
@@ -144,7 +144,7 @@ export function buildMcpServer(userId: string): McpServer {
     {
       title: "Histórico do treino",
       description:
-        "Plano atual de uma série de exercícios (kind WORKOUT) e o histórico do que foi realmente executado em cada dia (séries, reps, carga, hora). Padrão: últimos 30 dias.",
+        "Plano atual de uma série de exercícios (kind WORKOUT), histórico do que foi realmente executado em cada dia (séries, reps, carga, hora) e histórico textual das alterações feitas nos exercícios (campo changes: data/hora e o que mudou). Padrão: últimos 30 dias.",
       inputSchema: z.object({
         taskId: z.string().describe("Id da tarefa WORKOUT."),
         from: DATE.optional(),

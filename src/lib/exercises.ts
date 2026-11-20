@@ -13,11 +13,19 @@ import { DEFAULT_TZ, dateInTZ, isValidLocalDate, nominal } from "./domain/schedu
 import { isTaskState, normalizeAllowedStates } from "./domain/states";
 import {
   autoCompleteState,
+  describeDayValueAdjustment,
+  describeExerciseAdded,
+  describeExerciseDiff,
+  describeExerciseRemoved,
+  describeExerciseValuesDiff,
+  describePlanEdit,
+  exerciseOrderChanged,
   validateExercises,
   validateValuesPatch,
   valuesDiffer,
   workoutCompletionAction,
   type ExerciseInput,
+  type ExerciseSnapshot,
   type ExerciseValues,
   type LoadUnit,
   type TaskKind,
@@ -54,27 +62,98 @@ export async function resolveExercisesInput(
   return r.ok ? { ok: true, data: r.data } : { ok: false, status: 400, message: r.message };
 }
 
+function snapshotOf(e: Exercise): ExerciseSnapshot {
+  return {
+    name: e.name,
+    restSec: e.restSec,
+    notes: e.notes,
+    ...valuesOf(e),
+  };
+}
+
 /**
  * Grava a lista completa (a ordem do array vira `position`): ids conhecidos e
  * ativos são atualizados; sem id (ou id desconhecido) cria; ativos ausentes da
  * lista são arquivados — o histórico de logs continua apontando para eles.
+ *
+ * Quando `recordChanges` é true (edição de série já existente), registra em
+ * `ExerciseChange` cada adição, edição, remoção e mudança de ordem.
  */
-export async function saveExercises(tx: Tx, taskId: string, list: ExerciseInput[]): Promise<void> {
-  const current = await tx.exercise.findMany({ where: { taskId, archivedAt: null } });
-  const currentIds = new Set(current.map((e) => e.id));
-  const kept = new Set<string>();
+export async function saveExercises(
+  tx: Tx,
+  taskId: string,
+  list: ExerciseInput[],
+  opts?: { recordChanges?: boolean },
+): Promise<void> {
+  const current = await tx.exercise.findMany({
+    where: { taskId, archivedAt: null },
+    orderBy: { position: "asc" },
+  });
+  const shouldLog = opts?.recordChanges === true && current.length > 0;
+  const currentById = new Map(current.map((e) => [e.id, e]));
+  const keptIds: string[] = [];
+  const changes: Prisma.ExerciseChangeCreateManyInput[] = [];
+
   for (let position = 0; position < list.length; position += 1) {
     const { id, ...fields } = list[position];
-    if (id && currentIds.has(id)) {
-      kept.add(id);
-      await tx.exercise.update({ where: { id }, data: { ...fields, position } });
+    const prev = id ? currentById.get(id) : undefined;
+    if (prev) {
+      keptIds.push(prev.id);
+      await tx.exercise.update({ where: { id: prev.id }, data: { ...fields, position } });
+      if (shouldLog) {
+        const diffs = describeExerciseDiff(snapshotOf(prev), fields);
+        if (diffs.length > 0) {
+          changes.push({
+            taskId,
+            exerciseId: prev.id,
+            exerciseName: fields.name,
+            summary: describePlanEdit(diffs),
+          });
+        }
+      }
     } else {
-      await tx.exercise.create({ data: { ...fields, position, taskId } });
+      const created = await tx.exercise.create({ data: { ...fields, position, taskId } });
+      if (shouldLog) {
+        changes.push({
+          taskId,
+          exerciseId: created.id,
+          exerciseName: fields.name,
+          summary: describeExerciseAdded(fields),
+        });
+      }
     }
   }
-  const removed = current.filter((e) => !kept.has(e.id)).map((e) => e.id);
+
+  const keptSet = new Set(keptIds);
+  const removed = current.filter((e) => !keptSet.has(e.id));
   if (removed.length > 0) {
-    await tx.exercise.updateMany({ where: { id: { in: removed } }, data: { archivedAt: new Date() } });
+    await tx.exercise.updateMany({
+      where: { id: { in: removed.map((e) => e.id) } },
+      data: { archivedAt: new Date() },
+    });
+    if (shouldLog) {
+      for (const r of removed) {
+        changes.push({
+          taskId,
+          exerciseId: r.id,
+          exerciseName: r.name,
+          summary: describeExerciseRemoved(),
+        });
+      }
+    }
+  }
+
+  if (shouldLog && exerciseOrderChanged(current.map((e) => e.id), keptIds)) {
+    changes.push({
+      taskId,
+      exerciseId: null,
+      exerciseName: "(série)",
+      summary: `Ordem alterada: ${list.map((e) => e.name).join(" → ")}`,
+    });
+  }
+
+  if (changes.length > 0) {
+    await tx.exerciseChange.createMany({ data: changes });
   }
 }
 
@@ -94,13 +173,18 @@ function valuesOf(e: { sets: number | null; reps: number | null; durationSec: nu
 }
 
 /**
- * Instante de um registro novo: hoje → agora; dia passado → horário nominal da
- * tarefa (ou 23:59 local se sem hora); dia futuro → nominal (ou agora se sem
- * hora) — mesma regra de POST /api/completions, para não criar shifts absurdos
- * nas cadeias do dia ajustado/adiantado.
+ * Instante padrão da Completion automática em dia diferente de hoje:
+ * - dia passado → horário nominal da tarefa (ou 23:59 local se sem hora), para
+ *   não gerar shifts absurdos nas cadeias do dia ajustado;
+ * - dia futuro → nominal (ou agora se sem hora) — shift 0 nas cadeias.
+ * Já o `doneAt` de cada exercício registra sempre o clique real (`new Date()`).
  */
-function defaultDoneAt(task: Task, localDate: string, todayD: string, tz: string): Date {
-  if (localDate === todayD) return new Date();
+function defaultCompletedAt(
+  task: Task,
+  localDate: string,
+  todayD: string,
+  tz: string,
+): Date {
   if (localDate > todayD) return nominal(task, localDate, tz) ?? new Date();
   return nominal(task, localDate, tz) ?? fromZonedTime(`${localDate}T23:59:00`, tz);
 }
@@ -116,8 +200,10 @@ function allActiveDone(activeIds: string[], loggedIds: Iterable<string>): boolea
  */
 async function applyWorkoutCompletion(
   tx: Tx,
-  task: Pick<Task, "id" | "userId" | "allowedStates">,
+  task: Task,
   localDate: string,
+  todayD: string,
+  tz: string,
   wasAllDone: boolean,
 ): Promise<void> {
   const taskId = task.id;
@@ -125,6 +211,12 @@ async function applyWorkoutCompletion(
   const logs = await tx.exerciseLog.findMany({ where: { taskId, localDate } });
   const completion = await tx.completion.findUnique({ where: { taskId_localDate: { taskId, localDate } } });
   const lastDoneAt = logs.reduce<Date | null>((max, l) => (max == null || l.doneAt > max ? l.doneAt : max), null);
+  const completedAt =
+    lastDoneAt == null
+      ? null
+      : localDate === todayD
+        ? lastDoneAt
+        : defaultCompletedAt(task, localDate, todayD, tz);
   const action = workoutCompletionAction({
     wasAllDone,
     isAllDone: allActiveDone(
@@ -133,7 +225,7 @@ async function applyWorkoutCompletion(
     ),
     current: completion && isTaskState(completion.status) ? completion.status : completion ? "DONE" : null,
     autoState: autoCompleteState(normalizeAllowedStates(task.allowedStates)),
-    lastDoneAt,
+    lastDoneAt: completedAt,
   });
   if (action.kind === "upsert") {
     await tx.completion.upsert({
@@ -156,8 +248,9 @@ async function applyWorkoutCompletion(
 export async function completeWorkoutAfterEdit(tx: Tx, taskId: string): Promise<void> {
   const task = await tx.task.findUniqueOrThrow({ where: { id: taskId }, include: { user: true } });
   if (task.kind !== "WORKOUT") return;
-  const localDate = dateInTZ(new Date(), task.user.timezone ?? DEFAULT_TZ);
-  await applyWorkoutCompletion(tx, task, localDate, false);
+  const tz = task.user.timezone ?? DEFAULT_TZ;
+  const localDate = dateInTZ(new Date(), tz);
+  await applyWorkoutCompletion(tx, task, localDate, localDate, tz, false);
 }
 
 export type ExerciseLogResult =
@@ -215,17 +308,28 @@ export async function setExerciseLog(args: {
 
   const plan = valuesOf(exercise);
   const planChanged = localDate === todayD && valuesDiffer(plan, patch);
+  const done = args.done ?? existingLog != null;
+
+  let changeSummary: string | null = null;
+  if (planChanged) {
+    const diffs = describeExerciseValuesDiff(plan, { ...plan, ...patch });
+    if (diffs.length > 0) changeSummary = describeDayValueAdjustment(diffs, localDate, true);
+  } else if (done && Object.keys(patch).length > 0) {
+    const before = existingLog ? valuesOf(existingLog) : plan;
+    const diffs = describeExerciseValuesDiff(before, { ...before, ...patch });
+    if (diffs.length > 0) changeSummary = describeDayValueAdjustment(diffs, localDate, false);
+  }
 
   await prisma.$transaction(async (tx) => {
     if (planChanged) {
       await tx.exercise.update({ where: { id: exerciseId }, data: patch });
     }
 
-    const done = args.done ?? existingLog != null;
     if (!done) {
       if (existingLog) await tx.exerciseLog.delete({ where: { id: existingLog.id } });
     } else {
       // Snapshot: valores do registro existente (ou do plano) + ajuste pedido.
+      // `doneAt` registra sempre o horário real do clique.
       const snapshot = { ...(existingLog ? valuesOf(existingLog) : plan), ...patch };
       await tx.exerciseLog.upsert({
         where: { exerciseId_localDate: { exerciseId, localDate } },
@@ -236,12 +340,18 @@ export async function setExerciseLog(args: {
           taskId,
           userId,
           localDate,
-          doneAt: defaultDoneAt(task, localDate, todayD, tz),
+          doneAt: new Date(),
         },
       });
     }
 
-    await applyWorkoutCompletion(tx, task, localDate, wasAllDone);
+    if (changeSummary) {
+      await tx.exerciseChange.create({
+        data: { taskId, exerciseId, exerciseName: exercise.name, summary: changeSummary },
+      });
+    }
+
+    await applyWorkoutCompletion(tx, task, localDate, todayD, tz, wasAllDone);
   });
 
   // Só mutações no dia de hoje afetam alarmes presentes/futuros.

@@ -1,9 +1,9 @@
 /**
  * Histórico de uma série de exercícios (server-only) — usado pela ferramenta
  * MCP `get_workout_history`. Lê os SNAPSHOTS de ExerciseLog (valores
- * realmente executados), não o plano atual.
+ * realmente executados) e o histórico textual de alterações (ExerciseChange).
  */
-import { formatInTimeZone } from "date-fns-tz";
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 
 import { exerciseToDTO, type TaskExerciseDTO } from "./dto";
 import { DEFAULT_TZ, addDays, dateInTZ } from "./domain/schedule";
@@ -29,6 +29,13 @@ export interface WorkoutSession {
   exercises: WorkoutSessionExercise[];
 }
 
+export interface WorkoutChange {
+  at: string; // "YYYY-MM-DD HH:mm" no fuso do usuário
+  exerciseId: string | null;
+  exerciseName: string;
+  summary: string;
+}
+
 export interface WorkoutHistory {
   taskId: string;
   name: string;
@@ -37,6 +44,7 @@ export interface WorkoutHistory {
   timezone: string;
   plan: TaskExerciseDTO[]; // exercícios ativos (plano atual), na ordem
   sessions: WorkoutSession[]; // dias com algum registro, mais recente primeiro
+  changes: WorkoutChange[]; // alterações nos exercícios no período, mais recente primeiro
 }
 
 export type WorkoutHistoryResult =
@@ -63,12 +71,19 @@ export async function getWorkoutHistory(
   const todayD = dateInTZ(new Date(), tz);
   const range = clampStatsRange(from ?? (to ? null : addDays(todayD, -29)), to, todayD);
 
-  const [logs, completions] = await Promise.all([
+  const rangeStartUtc = fromZonedTime(`${range.from}T00:00:00`, tz);
+  const rangeEndExclusiveUtc = fromZonedTime(`${addDays(range.to, 1)}T00:00:00`, tz);
+
+  const [logs, completions, changes] = await Promise.all([
     prisma.exerciseLog.findMany({
       where: { taskId, localDate: { gte: range.from, lte: range.to } },
       orderBy: { doneAt: "asc" },
     }),
     prisma.completion.findMany({ where: { taskId, localDate: { gte: range.from, lte: range.to } } }),
+    prisma.exerciseChange.findMany({
+      where: { taskId, createdAt: { gte: rangeStartUtc, lt: rangeEndExclusiveUtc } },
+      orderBy: { createdAt: "desc" },
+    }),
   ]);
 
   const exById = new Map(task.exercises.map((e) => [e.id, e]));
@@ -112,6 +127,12 @@ export async function getWorkoutHistory(
       timezone: tz,
       plan: task.exercises.filter((e) => e.archivedAt == null).map(exerciseToDTO),
       sessions: [...sessions.values()].sort((a, b) => (a.date < b.date ? 1 : -1)),
+      changes: changes.map((c) => ({
+        at: formatInTimeZone(c.createdAt, tz, "yyyy-MM-dd HH:mm"),
+        exerciseId: c.exerciseId,
+        exerciseName: c.exerciseName,
+        summary: c.summary,
+      })),
     },
   };
 }

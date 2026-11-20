@@ -42,8 +42,9 @@ model Task {
   // "SIMPLE" (default, tarefa clássica) | "WORKOUT" (série de exercícios:
   // marcar todos os exercícios do dia conclui a tarefa automaticamente).
   kind          String       @default("SIMPLE")
-  completions   Completion[]
-  exercises     Exercise[]
+  completions     Completion[]
+  exercises       Exercise[]
+  exerciseChanges ExerciseChange[]
 
   @@index([userId])
 }
@@ -53,23 +54,40 @@ model Task {
 // histórico de ExerciseLog. Os valores aqui são o PLANO atual — ajustes feitos
 // no dia passam a valer para os próximos treinos.
 model Exercise {
-  id          String        @id @default(cuid())
+  id          String           @id @default(cuid())
   taskId      String
-  task        Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  task        Task             @relation(fields: [taskId], references: [id], onDelete: Cascade)
   position    Int
   name        String
   sets        Int?
   reps        Int?
   durationSec Int? // exercícios por tempo (ex.: prancha)
   load        Float?
-  loadUnit    String        @default("kg") // "kg" | "lb"
+  loadUnit    String           @default("kg") // "kg" | "lb"
   restSec     Int?
   notes       String?
   archivedAt  DateTime?
-  createdAt   DateTime      @default(now())
+  createdAt   DateTime         @default(now())
   logs        ExerciseLog[]
+  changes     ExerciseChange[]
 
   @@index([taskId])
+}
+
+// Histórico textual de alterações nos exercícios de uma série (edição no
+// cadastro ou ajuste durante o dia). Não aparece na UI; exposto via MCP
+// (`get_workout_history`) para a IA acompanhar os ajustes feitos nas séries.
+model ExerciseChange {
+  id           String    @id @default(cuid())
+  taskId       String
+  task         Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  exerciseId   String?
+  exercise     Exercise? @relation(fields: [exerciseId], references: [id], onDelete: SetNull)
+  exerciseName String
+  summary      String
+  createdAt    DateTime  @default(now())
+
+  @@index([taskId, createdAt])
 }
 
 // Registro do exercício no dia: um checkbox por exercício. Guarda um SNAPSHOT

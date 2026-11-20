@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   autoCompleteState,
+  describeDayValueAdjustment,
+  describeExerciseAdded,
+  describeExerciseDiff,
+  describeExerciseRemoved,
+  describeExerciseValuesDiff,
+  describePlanEdit,
+  exerciseOrderChanged,
   exerciseSummary,
   formatSeconds,
   isTaskKind,
@@ -8,6 +15,7 @@ import {
   validateValuesPatch,
   valuesDiffer,
   workoutCompletionAction,
+  type ExerciseSnapshot,
   type ExerciseValues,
 } from "./workout";
 
@@ -148,5 +156,104 @@ describe("workoutCompletionAction", () => {
     expect(
       workoutCompletionAction({ wasAllDone: false, isAllDone: true, current: null, autoState: null, lastDoneAt: at }),
     ).toEqual({ kind: "none" });
+  });
+});
+
+describe("histórico textual de alterações em exercícios", () => {
+  const snap: ExerciseSnapshot = {
+    name: "Supino",
+    sets: 3,
+    reps: 10,
+    durationSec: null,
+    load: 20,
+    loadUnit: "kg",
+    restSec: 60,
+    notes: "pegada fechada",
+  };
+
+  it("sem mudança retorna lista vazia (inclusive mudar loadUnit com carga nula)", () => {
+    expect(describeExerciseValuesDiff(base, { ...base })).toEqual([]);
+    expect(
+      describeExerciseValuesDiff(
+        { ...base, load: null, loadUnit: "kg" },
+        { ...base, load: null, loadUnit: "lb" },
+      ),
+    ).toEqual([]);
+    expect(describeExerciseDiff(snap, { ...snap })).toEqual([]);
+  });
+
+  it("descreve mudanças de séries, reps, tempo, carga (com unidade e 0) e limpeza", () => {
+    expect(
+      describeExerciseValuesDiff(base, { sets: 4, reps: 12, durationSec: 45, load: 22.5, loadUnit: "kg" }),
+    ).toEqual([
+      "séries: 3 → 4",
+      "repetições: 10 → 12",
+      "tempo: — → 45s",
+      "carga: 20 kg → 22,5 kg",
+    ]);
+
+    expect(
+      describeExerciseValuesDiff(
+        { sets: null, reps: null, durationSec: 60, load: 0, loadUnit: "kg" },
+        { sets: null, reps: null, durationSec: 90, load: null, loadUnit: "kg" },
+      ),
+    ).toEqual(["tempo: 1min → 1min30s", "carga: 0 kg → —"]);
+
+    expect(
+      describeExerciseValuesDiff(base, { ...base, loadUnit: "lb" }),
+    ).toEqual(["carga: 20 kg → 20 lb"]);
+  });
+
+  it("descreve mudanças de nome, descanso e observação no cadastro", () => {
+    const diffs = describeExerciseDiff(snap, {
+      ...snap,
+      name: "Supino reto",
+      restSec: 90,
+      notes: null,
+    });
+    expect(diffs).toEqual([
+      'nome: "Supino" → "Supino reto"',
+      "descanso: 1min → 1min30s",
+      'observação: "pegada fechada" → —',
+    ]);
+    expect(describePlanEdit(diffs)).toBe(
+      'Editado no cadastro: nome: "Supino" → "Supino reto"; descanso: 1min → 1min30s; observação: "pegada fechada" → —',
+    );
+  });
+
+  it("formata adição, remoção e ajuste no dia (plano atualizado x apenas neste dia)", () => {
+    expect(describeExerciseAdded(snap)).toBe(
+      "Adicionado à série (3×10 · 20 kg; descanso 1min; obs.: pegada fechada)",
+    );
+    expect(
+      describeExerciseAdded({
+        name: "Alongamento",
+        sets: null,
+        reps: null,
+        durationSec: null,
+        load: null,
+        loadUnit: "kg",
+        restSec: null,
+        notes: null,
+      }),
+    ).toBe("Adicionado à série");
+    expect(describeExerciseRemoved()).toBe("Removido da série");
+    expect(describeDayValueAdjustment(["carga: 20 kg → 22,5 kg"], "2026-11-20", true)).toBe(
+      "Ajuste no treino de 2026-11-20 (plano atualizado): carga: 20 kg → 22,5 kg",
+    );
+    expect(describeDayValueAdjustment(["carga: 20 kg → 18 kg"], "2026-11-18", false)).toBe(
+      "Ajuste no registro de 2026-11-18 (apenas neste dia): carga: 20 kg → 18 kg",
+    );
+  });
+
+  it("detecta reordenação apenas quando a ordem relativa dos exercícios mantidos muda", () => {
+    expect(exerciseOrderChanged(["a", "b", "c"], ["a", "b", "c"])).toBe(false);
+    // remover "a" não muda a ordem relativa de ["b", "c"]
+    expect(exerciseOrderChanged(["a", "b", "c"], ["b", "c"])).toBe(false);
+    // adicionar "d" no meio não muda a ordem relativa de ["a", "b", "c"]
+    expect(exerciseOrderChanged(["a", "b", "c"], ["a", "d", "b", "c"])).toBe(false);
+    // trocar "b" e "c" muda a ordem relativa
+    expect(exerciseOrderChanged(["a", "b", "c"], ["a", "c", "b"])).toBe(true);
+    expect(exerciseOrderChanged(["a", "b", "c"], ["c", "a"])).toBe(true);
   });
 });

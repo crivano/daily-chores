@@ -105,7 +105,8 @@ prisma/schema.prisma + migrations/
 - `Task`: `scheduleType` "WEEKLY" (`weekdays Int[]`, 0=domingo..6) | "MONTHLY" (`monthDay` 1..31); `time "HH:mm"` nullable; cadeia via `anchorId` (+`offsetMinutes`); `allowedStates String[] @default([])` = estados marcáveis (ARRAY vazio = sem restrição — default histórico; "NONE" nunca entra).
 - `Task.kind`: "SIMPLE" (default) | "WORKOUT" (série de exercícios).
 - `Exercise`: exercícios de UMA série (sem biblioteca compartilhada) — nome, `sets`, `reps`, `durationSec`, `load` + `loadUnit` (kg|lb), `restSec`, `notes`, `position`. Remover = `archivedAt` (preserva histórico).
-- `ExerciseLog`: único por `(exerciseId, localDate)` — um checkbox por exercício; `doneAt` real + SNAPSHOT dos valores executados.
+- `ExerciseLog`: único por `(exerciseId, localDate)` — um checkbox por exercício; `doneAt` = timestamp real do clique (`new Date()`) + SNAPSHOT dos valores executados.
+- `ExerciseChange`: histórico textual (pt-BR) com data/hora (`createdAt`) das alterações feitas nos exercícios (edição/adição/remoção/reordenação no cadastro e ajustes no dia). Não exibido na UI; exposto via MCP em `get_workout_history` (`changes`).
 - `Completion`: única por `(taskId, localDate)`; `completedAt` = timestamp real (editável); `status` = DONE | CANCELLED | HAPPY | INDIFFERENT | SAD | BOMB.
 - `PushSubscription`: **uma linha por dispositivo** (`endpoint` único); userId + chaves p256dh/auth. **Multi-dispositivo por usuário é suportado** — ver "Notificações".
 - `AlarmDelivered`: idempotência do disparo — única por `(taskId, localDate, kind)`, kind = NOMINAL | SHIFTED.

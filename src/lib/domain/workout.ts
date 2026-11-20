@@ -44,6 +44,13 @@ export interface ExerciseInput extends ExerciseValues {
   notes: string | null;
 }
 
+/** Campos comparáveis de um exercício (plano completo, sem metadados de banco). */
+export interface ExerciseSnapshot extends ExerciseValues {
+  name: string;
+  restSec: number | null;
+  notes: string | null;
+}
+
 type Result<T> = { ok: true; data: T } | { ok: false; message: string };
 
 const LIMITS = {
@@ -241,4 +248,97 @@ export function workoutCompletionAction(args: {
   }
   if (wasAllDone && !isAllDone && current === autoState) return { kind: "delete" };
   return { kind: "none" };
+}
+
+// ---------------------------------------------------------------------------
+// Histórico textual de alterações em exercícios (consumido pelo MCP)
+// ---------------------------------------------------------------------------
+
+const EMPTY_VAL = "—";
+
+function fmtInt(v: number | null): string {
+  return v == null ? EMPTY_VAL : String(v);
+}
+
+function fmtSec(v: number | null): string {
+  return v == null ? EMPTY_VAL : formatSeconds(v);
+}
+
+function fmtLoad(load: number | null, unit: LoadUnit): string {
+  return load == null ? EMPTY_VAL : formatLoad(load, unit);
+}
+
+function fmtText(v: string | null): string {
+  return v == null ? EMPTY_VAL : `"${v}"`;
+}
+
+/**
+ * Lista de diferenças legíveis entre dois conjuntos de valores de execução
+ * (séries, repetições, tempo, carga/unidade). Mudar só `loadUnit` quando ambas
+ * as cargas são nulas é ignorado (não houve mudança efetiva de carga).
+ */
+export function describeExerciseValuesDiff(prev: ExerciseValues, next: ExerciseValues): string[] {
+  const diffs: string[] = [];
+  if (prev.sets !== next.sets) diffs.push(`séries: ${fmtInt(prev.sets)} → ${fmtInt(next.sets)}`);
+  if (prev.reps !== next.reps) diffs.push(`repetições: ${fmtInt(prev.reps)} → ${fmtInt(next.reps)}`);
+  if (prev.durationSec !== next.durationSec) {
+    diffs.push(`tempo: ${fmtSec(prev.durationSec)} → ${fmtSec(next.durationSec)}`);
+  }
+  const hasLoad = prev.load != null || next.load != null;
+  if (hasLoad && (prev.load !== next.load || prev.loadUnit !== next.loadUnit)) {
+    diffs.push(`carga: ${fmtLoad(prev.load, prev.loadUnit)} → ${fmtLoad(next.load, next.loadUnit)}`);
+  }
+  return diffs;
+}
+
+/** Diferenças legíveis de todos os campos editáveis de um exercício no cadastro. */
+export function describeExerciseDiff(prev: ExerciseSnapshot, next: ExerciseSnapshot): string[] {
+  const diffs: string[] = [];
+  if (prev.name !== next.name) diffs.push(`nome: ${fmtText(prev.name)} → ${fmtText(next.name)}`);
+  diffs.push(...describeExerciseValuesDiff(prev, next));
+  if (prev.restSec !== next.restSec) diffs.push(`descanso: ${fmtSec(prev.restSec)} → ${fmtSec(next.restSec)}`);
+  if (prev.notes !== next.notes) diffs.push(`observação: ${fmtText(prev.notes)} → ${fmtText(next.notes)}`);
+  return diffs;
+}
+
+/** Descrição textual de um exercício recém-adicionado a uma série existente. */
+export function describeExerciseAdded(ex: ExerciseSnapshot): string {
+  const details = [
+    exerciseSummary(ex) || null,
+    ex.restSec != null ? `descanso ${formatSeconds(ex.restSec)}` : null,
+    ex.notes ? `obs.: ${ex.notes}` : null,
+  ].filter(Boolean);
+  return details.length > 0 ? `Adicionado à série (${details.join("; ")})` : "Adicionado à série";
+}
+
+/** Descrição textual de um exercício removido (arquivado) de uma série. */
+export function describeExerciseRemoved(): string {
+  return "Removido da série";
+}
+
+/** Descrição textual de uma edição feita no cadastro da tarefa. */
+export function describePlanEdit(diffs: string[]): string {
+  return `Editado no cadastro: ${diffs.join("; ")}`;
+}
+
+/** Descrição textual de um ajuste feito durante o dia (hoje atualiza o plano). */
+export function describeDayValueAdjustment(diffs: string[], localDate: string, updatedPlan: boolean): string {
+  const prefix = updatedPlan
+    ? `Ajuste no treino de ${localDate} (plano atualizado)`
+    : `Ajuste no registro de ${localDate} (apenas neste dia)`;
+  return `${prefix}: ${diffs.join("; ")}`;
+}
+
+/**
+ * true se os exercícios MANTIDOS (presentes em `prevIds` e `nextIds`) mudaram
+ * de ordem relativa. Inserções ou remoções que apenas deslocam índices não
+ * contam como reordenação.
+ */
+export function exerciseOrderChanged(prevIds: string[], nextIds: string[]): boolean {
+  const nextSet = new Set(nextIds);
+  const prevKept = prevIds.filter((id) => nextSet.has(id));
+  const prevSet = new Set(prevIds);
+  const nextKept = nextIds.filter((id) => prevSet.has(id));
+  if (prevKept.length !== nextKept.length) return false;
+  return prevKept.some((id, i) => id !== nextKept[i]);
 }
