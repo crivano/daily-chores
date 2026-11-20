@@ -2,6 +2,7 @@
  * DTOs do dia — tipos PUROS (sem Prisma), importáveis por client e server.
  * Preenchidos por getDayPayload (src/lib/day.ts) e consumidos pelo DayBoard.
  */
+import type { MealPlan } from "./meal";
 import type { TaskState } from "./states";
 import type { LoadUnit } from "./workout";
 
@@ -42,6 +43,7 @@ export interface DayTaskDTO {
   note?: string; // "após {âncora}"
   allowedStates: TaskState[] | null; // estados marcáveis; null = sem restrição
   workout?: DayWorkoutDTO; // presente só em séries de exercícios
+  mealPlan?: MealPlan; // presente só em refeições com cardápio
 }
 
 export interface DayPayload {

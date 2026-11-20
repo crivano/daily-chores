@@ -27,6 +27,7 @@ Conceitos:
 - Tarefa relativa: anchorTaskId aponta para outra tarefa. Com time, a âncora também precisa ter hora e o atraso da âncora desloca a dependente. Sem time, offsetMinutes (≥ 0) é obrigatório: notifica X min após a âncora ser concluída. A cadeia inteira precisa ter a mesma recorrência; ciclos são proibidos; não dá para excluir uma âncora com dependentes.
 - Estados do dia: NONE (não marcado), DONE (feito), CANCELLED (cancelado — silencia mas não conta), HAPPY/INDIFFERENT/SAD (feito com humor), BOMB (falha registrada, ex.: estourou a dieta). allowedStates restringe os estados marcáveis (null/[] = todos).
 - Séries de exercícios: kind "WORKOUT" com lista de exercícios (sets, reps, durationSec, load + loadUnit kg|lb, restSec, notes). Marcar o último exercício do dia conclui a tarefa automaticamente. Ajustar valores de um exercício HOJE muda o plano dos próximos treinos. Todas as alterações feitas nos exercícios (cadastro ou ajustes no dia) ficam registradas com data/hora em get_workout_history (campo changes).
+- Refeições (cardápio): kind "MEAL" com mealPlan para consulta rápida no dia. Estrutura: options (≥ 1 variação, ex.: Jantar "Comida" e "Opção lanche"; name obrigatório quando há ≥ 2 variações), cada uma com items (food, quantity opcional, substitutions[] com food + quantity opcional) e notes opcional; além de notes gerais opcionais no mealPlan. Na tela Hoje o usuário abre o cardápio para consultar opções/substituições e marca o estado da tarefa normalmente.
 - Datas são "YYYY-MM-DD" no fuso do usuário; marcações valem para dias passados (correção) e futuros (adiantar). list_tasks e get_day informam a data de hoje.
 
 Boas práticas: consulte list_tasks antes de criar/alterar (para obter ids e evitar duplicatas); confirme com o usuário antes de excluir tarefas; em update_task com exercises, envie a lista COMPLETA (com o id dos exercícios mantidos — omitidos são arquivados).`;
@@ -47,6 +48,37 @@ const exerciseSchema = z.object({
   notes: z.string().max(300).nullable().optional().describe("Observações."),
 });
 
+const mealSubstitutionSchema = z.object({
+  food: z.string().max(140).describe("Alimento ou opção de substituição (ex.: 'Arroz branco cozido' ou 'Ou escolha 3 porções do grupo 5')."),
+  quantity: z.string().max(120).nullable().optional().describe("Quantidade equivalente (ex.: '3 colheres de sopa cheias (75g)')."),
+});
+
+const mealItemSchema = z.object({
+  food: z.string().max(140).describe("Alimento principal (ex.: 'Batata doce, cozida')."),
+  quantity: z.string().max(120).nullable().optional().describe("Quantidade recomendada (ex.: '3 fatias pequenas (120g)')."),
+  substitutions: z
+    .array(mealSubstitutionSchema)
+    .max(20)
+    .optional()
+    .describe("Opções de substituição equivalentes para este item (pode ser vazio)."),
+});
+
+const mealOptionSchema = z.object({
+  name: z
+    .string()
+    .max(60)
+    .nullable()
+    .optional()
+    .describe("Nome da variação (ex.: 'Comida', 'Opção lanche'). Obrigatório quando há 2 ou mais opções; opcional quando há só 1."),
+  items: z.array(mealItemSchema).min(1).max(30).describe("Itens desta variação na ordem de exibição."),
+  notes: z.string().max(1500).nullable().optional().describe("Observações desta variação (suplementos, preparo, ordem de consumo; aceita quebras de linha)."),
+});
+
+const mealPlanSchema = z.object({
+  options: z.array(mealOptionSchema).min(1).max(10).describe("Variações do cardápio da refeição (≥ 1)."),
+  notes: z.string().max(1500).nullable().optional().describe("Observações gerais válidas para toda a refeição (opcional)."),
+});
+
 const taskFields = {
   name: z.string().describe("Nome da tarefa (máx. 80)."),
   scheduleType: z.enum(["WEEKLY", "MONTHLY"]).describe("Recorrência."),
@@ -57,10 +89,11 @@ const taskFields = {
   offsetMinutes: z.number().int().min(0).nullable().describe("Relativa sem hora: minutos após a âncora ser concluída."),
   allowedStates: z.array(z.enum(STATE_VALUES)).nullable().describe("Estados marcáveis; null ou [] = todos."),
   active: z.boolean().describe("false desativa (sem notificações) sem excluir."),
-  kind: z.enum(["SIMPLE", "WORKOUT"]).describe("WORKOUT = série de exercícios (exige exercises)."),
+  kind: z.enum(["SIMPLE", "WORKOUT", "MEAL"]).describe("WORKOUT = série de exercícios (exige exercises); MEAL = refeição com cardápio (exige mealPlan)."),
   exercises: z
     .array(exerciseSchema)
     .describe("Lista COMPLETA de exercícios da série, na ordem de execução. Exercícios ativos omitidos são arquivados."),
+  mealPlan: mealPlanSchema.describe("Cardápio COMPLETO da refeição (usado quando kind = MEAL)."),
 };
 
 // Criação: só nome e recorrência são obrigatórios; patch: tudo opcional + taskId.
@@ -99,7 +132,7 @@ export function buildMcpServer(userId: string): McpServer {
     {
       title: "Listar tarefas",
       description:
-        "Lista todas as tarefas cadastradas (ativas e inativas) com recorrência, horário, âncora, estados permitidos e exercícios das séries. Também informa o fuso e a data de hoje.",
+        "Lista todas as tarefas cadastradas (ativas e inativas) com recorrência, horário, âncora, estados permitidos, exercícios das séries e cardápios das refeições. Também informa o fuso e a data de hoje.",
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -117,7 +150,7 @@ export function buildMcpServer(userId: string): McpServer {
     {
       title: "Ver o dia",
       description:
-        "Tarefas devidas em um dia (hoje por padrão) com o estado de cada uma, horários previstos/executados, progresso e, nas séries, os exercícios marcados.",
+        "Tarefas devidas em um dia (hoje por padrão) com o estado de cada uma, horários previstos/executados, progresso, exercícios das séries e cardápios das refeições.",
       inputSchema: z.object({ date: DATE.optional().describe("Dia YYYY-MM-DD (padrão: hoje; passado ou futuro).") }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -165,7 +198,7 @@ export function buildMcpServer(userId: string): McpServer {
     {
       title: "Criar tarefa",
       description:
-        "Cria uma tarefa recorrente (ou série de exercícios com kind WORKOUT + exercises). WEEKLY exige weekdays; MONTHLY exige monthDay. Sem allowedStates, todos os estados ficam disponíveis.",
+        "Cria uma tarefa recorrente (simples, série de exercícios com kind WORKOUT + exercises, ou refeição com kind MEAL + mealPlan). WEEKLY exige weekdays; MONTHLY exige monthDay. Sem allowedStates, todos os estados ficam disponíveis.",
       inputSchema: createSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
@@ -180,7 +213,7 @@ export function buildMcpServer(userId: string): McpServer {
     {
       title: "Alterar tarefa",
       description:
-        "Altera campos de uma tarefa existente (patch: só os campos enviados mudam). Para ajustar uma série, envie exercises com a lista completa — inclua o id dos exercícios mantidos; os omitidos são arquivados (o histórico é preservado). Para só ativar/desativar, envie active.",
+        "Altera campos de uma tarefa existente (patch: só os campos enviados mudam). Para ajustar uma série, envie exercises com a lista completa — inclua o id dos exercícios mantidos; os omitidos são arquivados (o histórico é preservado). Para ajustar um cardápio, envie kind='MEAL' e mealPlan completo. Para só ativar/desativar, envie active.",
       inputSchema: updateSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },

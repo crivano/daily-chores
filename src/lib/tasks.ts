@@ -6,8 +6,8 @@
  * - âncora deve ter o MESMO scheduleType e o MESMO conjunto de dias (v1),
  *   verificado transitivamente em toda a cadeia;
  * - allowedStates: estados marcáveis (sem "NONE"); ARRAY vazio = sem restrição;
- * - kind: "SIMPLE" | "WORKOUT" (os exercícios da série são validados à parte,
- *   em domain/workout.ts, e gravados por lib/exercises.ts).
+ * - kind: "SIMPLE" | "WORKOUT" | "MEAL" (exercícios validados em
+ *   domain/workout.ts; cardápio validado em domain/meal.ts).
  */
 import type { Task } from "@/generated/prisma/client";
 import { COMPLETION_STATUSES, isTaskState } from "./domain/states";
@@ -80,7 +80,7 @@ export async function validateTaskInput(
   } else if (isTaskKind(input.kind)) {
     kind = input.kind;
   } else {
-    return bad(400, "Tipo de tarefa inválido (use SIMPLE ou WORKOUT).");
+    return bad(400, "Tipo de tarefa inválido (use SIMPLE, WORKOUT ou MEAL).");
   }
 
   const rawType = typeof input.scheduleType === "string" ? input.scheduleType : undefined;

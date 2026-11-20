@@ -12,13 +12,7 @@
  * - remover exercício = arquivar (o histórico continua apontando para ele).
  */
 import { STATE_META, isStateAllowed, type AllowedStates, type TaskState } from "./states";
-
-export const TASK_KINDS = ["SIMPLE", "WORKOUT"] as const;
-export type TaskKind = (typeof TASK_KINDS)[number];
-
-export function isTaskKind(v: unknown): v is TaskKind {
-  return typeof v === "string" && (TASK_KINDS as readonly string[]).includes(v);
-}
+export { TASK_KINDS, isTaskKind, type TaskKind } from "./taskKind";
 
 export const LOAD_UNITS = ["kg", "lb"] as const;
 export type LoadUnit = (typeof LOAD_UNITS)[number];

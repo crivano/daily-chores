@@ -14,6 +14,7 @@ const t = (name: string, time: string | null): TaskDTO => ({
   allowedStates: null,
   kind: "SIMPLE",
   exercises: [],
+  mealPlan: null,
   dependents: [],
 });
 

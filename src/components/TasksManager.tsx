@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { compareTaskDTOs, type TaskDTO } from "@/lib/dto";
+import { mealSummary } from "@/lib/domain/meal";
 import { recurrenceLabel, timeRuleLabel } from "@/lib/format";
 import { TaskFormModal } from "./TaskFormModal";
 
@@ -73,6 +74,7 @@ export function TasksManager({ tasks }: { tasks: TaskDTO[] }) {
             {recurrenceLabel(task)} · {timeRuleLabel(task, anchorName)}
             {task.kind === "WORKOUT" &&
               ` · ${task.exercises.length} exercício${task.exercises.length === 1 ? "" : "s"}`}
+            {task.kind === "MEAL" && task.mealPlan && ` · ${mealSummary(task.mealPlan)}`}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1">

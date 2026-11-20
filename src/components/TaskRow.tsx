@@ -3,7 +3,9 @@
 import { useState } from "react";
 
 import type { DayTaskDTO } from "@/lib/domain/day";
+import { mealSummary } from "@/lib/domain/meal";
 import { STATE_META, nextStateAllowed, type TaskState } from "@/lib/domain/states";
+import { MealPlanView } from "./MealPlanView";
 import { WorkoutExercises, type ExerciseMutation } from "./WorkoutExercises";
 
 interface Props {
@@ -81,9 +83,12 @@ export function TaskRow({ task, onSetState, onSetTime, onMutateExercise, today =
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
-  // Série de exercícios: tocar na linha abre/fecha a lista; o ícone de estado
-  // vira um botão próprio (ciclo de estados continua disponível — ex.: Bomba).
+  // Série de exercícios ou refeição com cardápio: tocar na linha abre/fecha o
+  // conteúdo; o ícone de estado vira um botão próprio (ciclo de estados segue
+  // disponível em 1 toque — ex.: Feito, Feliz, Bomba).
   const workout = task.workout;
+  const mealPlan = task.mealPlan;
+  const expandable = Boolean(workout || mealPlan);
   const [open, setOpen] = useState(false);
 
   const meta = STATE_META[task.state];
@@ -124,19 +129,22 @@ export function TaskRow({ task, onSetState, onSetTime, onMutateExercise, today =
     else flashError();
   }
 
-  const rowAction = workout ? () => setOpen((o) => !o) : cycle;
+  const mealSubtitle = mealPlan ? mealSummary(mealPlan) : null;
+  const rowAction = expandable ? () => setOpen((o) => !o) : cycle;
   const rowLabel = workout
     ? `${task.name}: ${workout.done} de ${workout.total} exercícios — toque para ${open ? "fechar" : "ver"} a lista`
-    : `${task.name}: ${cycleLabel}`;
+    : mealPlan
+      ? `${task.name}: ${mealSubtitle} — toque para ${open ? "fechar" : "ver"} o cardápio`
+      : `${task.name}: ${cycleLabel}`;
 
   return (
-    <li className={`relative ${workout ? "rounded-2xl bg-white shadow-sm dark:bg-zinc-800" : ""}`}>
+    <li className={`relative ${expandable ? "rounded-2xl bg-white shadow-sm dark:bg-zinc-800" : ""}`}>
       <div
         role="button"
         tabIndex={0}
         aria-label={rowLabel}
-        aria-expanded={workout ? open : undefined}
-        title={workout ? undefined : cycleLabel}
+        aria-expanded={expandable ? open : undefined}
+        title={expandable ? undefined : cycleLabel}
         onClick={rowAction}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -146,9 +154,9 @@ export function TaskRow({ task, onSetState, onSetTime, onMutateExercise, today =
         }}
         className={`flex min-h-16 w-full cursor-pointer items-center gap-3 rounded-2xl bg-white p-4 text-left shadow-sm transition active:scale-[0.99] dark:bg-zinc-800 ${
           task.state !== "NONE" && !open ? "opacity-50" : ""
-        } ${workout ? "shadow-none" : ""}`}
+        } ${expandable ? "shadow-none" : ""}`}
       >
-        {workout ? (
+        {expandable ? (
           <button
             type="button"
             aria-label={`${task.name}: ${cycleLabel}`}
@@ -182,7 +190,24 @@ export function TaskRow({ task, onSetState, onSetTime, onMutateExercise, today =
                 fill="none"
                 stroke="currentColor"
                 strokeWidth={2.5}
-                className={`h-3.5 w-3.5 transition ${open ? "rotate-180" : ""}`}
+                className={`h-3.5 w-3.5 shrink-0 transition ${open ? "rotate-180" : ""}`}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </span>
+          )}
+          {mealSubtitle && (
+            <span className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+              <span className="truncate">{mealSubtitle}</span>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2.5}
+                className={`h-3.5 w-3.5 shrink-0 transition ${open ? "rotate-180" : ""}`}
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 aria-hidden
@@ -281,6 +306,11 @@ export function TaskRow({ task, onSetState, onSetTime, onMutateExercise, today =
       {workout && open && onMutateExercise && (
         <div className="px-3 pb-3">
           <WorkoutExercises workout={workout} today={today} onMutate={onMutateExercise} />
+        </div>
+      )}
+      {mealPlan && open && (
+        <div className="px-3 pb-3">
+          <MealPlanView plan={mealPlan} />
         </div>
       )}
       {error && (

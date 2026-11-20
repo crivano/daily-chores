@@ -7,6 +7,7 @@ import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
 
 import type { DayExerciseDTO, DayPayload, DayTaskDTO, DayWorkoutDTO } from "./domain/day";
+import { parseMealPlan } from "./domain/meal";
 import {
   DEFAULT_TZ,
   dateInTZ,
@@ -96,6 +97,7 @@ export async function getDayPayload(userId: string, requested?: string | null): 
 
   const toDTO = (task: TaskLike, eff: Date | undefined, note?: string): DayTaskDTO => {
     const c = complByTask.get(task.id);
+    const mealPlan = task.kind === "MEAL" ? parseMealPlan(task.mealPlan) : null;
     return {
       taskId: task.id,
       name: task.name,
@@ -106,6 +108,7 @@ export async function getDayPayload(userId: string, requested?: string | null): 
       note,
       allowedStates: normalizeAllowedStates(task.allowedStates),
       ...(task.kind === "WORKOUT" ? { workout: workoutOf(task.id) } : {}),
+      ...(mealPlan ? { mealPlan } : {}),
     };
   };
 

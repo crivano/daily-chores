@@ -3,9 +3,10 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { TaskDTO } from "@/lib/dto";
+import { validateMealPlan } from "@/lib/domain/meal";
 import type { TaskState } from "@/lib/domain/states";
 import { WEEKDAY_LABELS, formatOffset, gapMinutes } from "@/lib/format";
-import type { TaskKind } from "@/lib/domain/workout";
+import type { TaskKind } from "@/lib/domain/taskKind";
 import {
   ExerciseListEditor,
   draftFromDTO,
@@ -13,6 +14,13 @@ import {
   emptyDraft,
   type ExerciseDraft,
 } from "./ExerciseListEditor";
+import {
+  MealPlanEditor,
+  emptyMealPlanDraft,
+  mealDraftFromDTO,
+  mealDraftToPayload,
+  type MealPlanDraft,
+} from "./MealPlanEditor";
 import { STATUS_COLORS, STATUS_ORDER } from "./statsColors";
 
 interface Props {
@@ -62,6 +70,9 @@ export function TaskFormModal({ task, tasks, onClose }: Props) {
   const [kind, setKind] = useState<TaskKind>(task?.kind ?? "SIMPLE");
   const [exercises, setExercises] = useState<ExerciseDraft[]>(() =>
     task?.exercises.length ? task.exercises.map(draftFromDTO) : [emptyDraft()],
+  );
+  const [mealPlan, setMealPlan] = useState<MealPlanDraft>(() =>
+    task?.mealPlan ? mealDraftFromDTO(task.mealPlan) : emptyMealPlanDraft(),
   );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -118,10 +129,17 @@ export function TaskFormModal({ task, tasks, onClose }: Props) {
       const unnamed = exercises.findIndex((e) => !e.name.trim());
       if (unnamed >= 0) return setError(`Exercício ${unnamed + 1}: informe o nome.`);
     }
+    let normalizedMealPlan: ReturnType<typeof mealDraftToPayload> | undefined;
+    if (kind === "MEAL") {
+      normalizedMealPlan = mealDraftToPayload(mealPlan);
+      const check = validateMealPlan(normalizedMealPlan);
+      if (!check.ok) return setError(check.message);
+    }
 
     const payload = {
       kind,
       ...(kind === "WORKOUT" ? { exercises: exercises.map(draftToPayload) } : {}),
+      ...(kind === "MEAL" ? { mealPlan: normalizedMealPlan } : {}),
       name: name.trim(),
       scheduleType,
       ...(scheduleType === "WEEKLY" ? { weekdays: [...weekdays].sort((a, b) => a - b) } : { monthDay }),
@@ -190,11 +208,12 @@ export function TaskFormModal({ task, tasks, onClose }: Props) {
 
             <div>
               <span className={label}>Tipo</span>
-              <div className="flex gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 {(
                   [
-                    ["SIMPLE", "Tarefa simples"],
-                    ["WORKOUT", "Série de exercícios"],
+                    ["SIMPLE", "Simples"],
+                    ["WORKOUT", "Treino"],
+                    ["MEAL", "Refeição"],
                   ] as const
                 ).map(([value, text]) => (
                   <button
@@ -202,7 +221,7 @@ export function TaskFormModal({ task, tasks, onClose }: Props) {
                     type="button"
                     aria-pressed={kind === value}
                     onClick={() => setKind(value)}
-                    className={`h-9 flex-1 rounded-xl text-xs font-semibold transition ${
+                    className={`h-9 rounded-xl text-xs font-semibold transition ${
                       kind === value
                         ? "bg-indigo-600 text-white"
                         : "bg-white text-zinc-600 shadow-sm dark:bg-zinc-800 dark:text-zinc-300"
@@ -218,6 +237,13 @@ export function TaskFormModal({ task, tasks, onClose }: Props) {
               <div>
                 <span className={label}>Exercícios</span>
                 <ExerciseListEditor items={exercises} onChange={setExercises} />
+              </div>
+            )}
+
+            {kind === "MEAL" && (
+              <div>
+                <span className={label}>Cardápio</span>
+                <MealPlanEditor plan={mealPlan} onChange={setMealPlan} />
               </div>
             )}
 

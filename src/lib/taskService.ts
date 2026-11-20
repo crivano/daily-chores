@@ -4,8 +4,10 @@
  * lib/tasks.ts (validação) e lib/exercises.ts (séries); aqui fica só a
  * orquestração: validar → gravar em transação → re-sincronizar alarmes.
  */
+import type { Prisma } from "@/generated/prisma/client";
 import { taskToDTO, type TaskDTO } from "./dto";
 import { completeWorkoutAfterEdit, resolveExercisesInput, saveExercises } from "./exercises";
+import { resolveMealPlanInput } from "./meals";
 import { prisma } from "./prisma";
 import { removeAllQueuedForTask, syncAlarms } from "./sync";
 import { validateTaskInput, type TaskInput } from "./tasks";
@@ -13,9 +15,9 @@ import { validateTaskInput, type TaskInput } from "./tasks";
 export type ServiceFailure = { ok: false; status: number; message: string; dependents?: string[] };
 export type ServiceResult<T> = { ok: true; data: T } | ServiceFailure;
 
-type TaskBody = TaskInput & { exercises?: unknown };
+type TaskBody = TaskInput & { exercises?: unknown; mealPlan?: unknown };
 
-/** Cria a tarefa (e a lista de exercícios, se série). */
+/** Cria a tarefa (com exercícios se WORKOUT ou cardápio se MEAL). */
 export async function createTask(userId: string, body: TaskBody): Promise<ServiceResult<TaskDTO>> {
   const result = await validateTaskInput(userId, body);
   if (!result.ok) return result;
@@ -24,8 +26,18 @@ export async function createTask(userId: string, body: TaskBody): Promise<Servic
   const exercises = await resolveExercisesInput(result.data.kind, body.exercises);
   if (!exercises.ok) return exercises;
 
+  // Refeição: cardápio estruturado (≥ 1 opção com ≥ 1 item).
+  const mealPlan = resolveMealPlanInput(result.data.kind, body.mealPlan);
+  if (!mealPlan.ok) return mealPlan;
+
   const task = await prisma.$transaction(async (tx) => {
-    const created = await tx.task.create({ data: { userId, ...result.data } });
+    const created = await tx.task.create({
+      data: {
+        userId,
+        ...result.data,
+        ...(mealPlan.data !== undefined ? { mealPlan: mealPlan.data as unknown as Prisma.InputJsonValue } : {}),
+      },
+    });
     if (exercises.data) await saveExercises(tx, created.id, exercises.data);
     return tx.task.findUniqueOrThrow({ where: { id: created.id }, include: { exercises: true } });
   });
@@ -34,7 +46,7 @@ export async function createTask(userId: string, body: TaskBody): Promise<Servic
   return { ok: true, data: taskToDTO(task, []) };
 }
 
-/** Patch da tarefa; `exercises` ausente = mantém a lista atual. */
+/** Patch da tarefa; `exercises` / `mealPlan` ausentes mantêm os atuais. */
 export async function updateTask(userId: string, id: string, body: TaskBody): Promise<ServiceResult<TaskDTO>> {
   const task = await prisma.task.findUnique({ where: { id } });
   if (!task || task.userId !== userId) return { ok: false, status: 404, message: "Tarefa não encontrada." };
@@ -45,12 +57,21 @@ export async function updateTask(userId: string, id: string, body: TaskBody): Pr
   const exercises = await resolveExercisesInput(result.data.kind, body.exercises, id);
   if (!exercises.ok) return exercises;
 
+  const mealPlan = resolveMealPlanInput(result.data.kind, body.mealPlan, task.mealPlan);
+  if (!mealPlan.ok) return mealPlan;
+
   const dependents = await prisma.task.findMany({
     where: { anchorId: id },
     select: { id: true, name: true },
   });
   const updated = await prisma.$transaction(async (tx) => {
-    await tx.task.update({ where: { id }, data: result.data });
+    await tx.task.update({
+      where: { id },
+      data: {
+        ...result.data,
+        ...(mealPlan.data !== undefined ? { mealPlan: mealPlan.data as unknown as Prisma.InputJsonValue } : {}),
+      },
+    });
     if (exercises.data) {
       await saveExercises(tx, id, exercises.data, { recordChanges: true });
       await completeWorkoutAfterEdit(tx, id);

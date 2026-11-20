@@ -40,8 +40,12 @@ model Task {
   // "NONE" nunca entra — voltar a "não marcado" é sempre possível.
   allowedStates String[] @default([])
   // "SIMPLE" (default, tarefa clássica) | "WORKOUT" (série de exercícios:
-  // marcar todos os exercícios do dia conclui a tarefa automaticamente).
+  // marcar todos os exercícios do dia conclui a tarefa automaticamente) |
+  // "MEAL" (refeição com cardápio estruturado para consulta rápida).
   kind          String       @default("SIMPLE")
+  // Cardápio estruturado (Task.kind = "MEAL"): variações, itens com
+  // substituições e observações. Validado por lib/domain/meal.ts.
+  mealPlan      Json?
   completions     Completion[]
   exercises       Exercise[]
   exerciseChanges ExerciseChange[]

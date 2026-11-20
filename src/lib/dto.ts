@@ -1,6 +1,8 @@
 import type { Exercise, Task } from "@/generated/prisma/client";
+import { parseMealPlan, type MealPlan } from "./domain/meal";
 import { normalizeAllowedStates, type TaskState } from "./domain/states";
-import type { LoadUnit, TaskKind } from "./domain/workout";
+import { isTaskKind, type TaskKind } from "./domain/taskKind";
+import type { LoadUnit } from "./domain/workout";
 import { timeToMinutes } from "./format";
 
 /** Exercício (plano atual) de uma série — só os ativos, na ordem de exibição. */
@@ -46,12 +48,13 @@ export interface TaskDTO {
   offsetMinutes: number | null;
   allowedStates: TaskState[] | null; // null = sem restrição (todos)
   kind: TaskKind;
-  exercises: TaskExerciseDTO[]; // ativos, por position (vazio em SIMPLE)
+  exercises: TaskExerciseDTO[]; // ativos, por position (vazio em SIMPLE/MEAL)
+  mealPlan: MealPlan | null; // presente só em MEAL
   dependents: { id: string; name: string }[];
 }
 
 export function taskToDTO(task: TaskWithExercises, dependents: { id: string; name: string }[]): TaskDTO {
-  const kind: TaskKind = task.kind === "WORKOUT" ? "WORKOUT" : "SIMPLE";
+  const kind: TaskKind = isTaskKind(task.kind) ? task.kind : "SIMPLE";
   return {
     id: task.id,
     name: task.name,
@@ -71,6 +74,7 @@ export function taskToDTO(task: TaskWithExercises, dependents: { id: string; nam
             .sort((a, b) => a.position - b.position)
             .map(exerciseToDTO)
         : [],
+    mealPlan: kind === "MEAL" ? parseMealPlan(task.mealPlan) : null,
     dependents,
   };
 }
