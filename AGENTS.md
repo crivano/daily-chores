@@ -16,7 +16,7 @@ App web pessoal (UI toda em **pt-BR**) para rotinas diárias com notificações.
 
 ## Stack (com as pegadinhas de cada peça)
 
-- **Next.js 16.3.8, App Router, `src/`, TypeScript, Tailwind v4** — build usa **webpack** (`next build --webpack`); 3 telas: `/` (hoje), `/tarefas`, `/configuracoes`, mobile-first, claro/escuro automático.
+- **Next.js 16.3.8, App Router, `src/`, TypeScript, Tailwind v4** — build usa **webpack** (`next build --webpack`); 5 telas na nav: `/` (hoje), `/compras`, `/tarefas`, `/estatisticas`, `/configuracoes`, mobile-first, claro/escuro automático.
 - **Prisma 7** com driver adapter (`@prisma/adapter-pg`), generator `prisma-client` gerado em **`src/generated/prisma/`** (importar de `@/generated/prisma/client`; este diretório é commitado). Config em **`prisma7.config.ts`** (não é o `schema.prisma` clássico de config). `src/lib/prisma.ts` exporta um **Proxy lazy** — o import nunca constrói o client (o build do Next coleta dados de página sem segredos).
 - **Neon Postgres** — runtime usa a string **POOLED** (`DATABASE_URL`, host com `-pooler`); migrations usam a string **DIRETA** (`DIRECT_URL`): `DATABASE_URL="$DIRECT_URL" npx prisma migrate deploy`.
 - **Auth.js v5 beta + Google** (sessão JWT). Ver gotcha do `user.id` em "Autenticação".
@@ -59,11 +59,13 @@ src/
 ├── app/
 │   ├── (app)/                   # layout autenticado (BottomNav + TimezoneSender + ServiceWorkerRegister)
 │   │   ├── page.tsx             # Hoje — shell fino; dados vivem no DayBoard (client)
+│   │   ├── compras/page.tsx     # Lista de compras por locais (ShoppingBoard)
 │   │   ├── tarefas/page.tsx     # CRUD de tarefas (TasksManager)
 │   │   ├── estatisticas/page.tsx# StatsBoard (recharts)
 │   │   └── configuracoes/       # fuso + push + logout (SettingsClient)
 │   ├── api/
 │   │   ├── day/                 # GET payload do dia (?d=YYYY-MM-DD)
+│   │   ├── shopping/            # GET lista; places/ + places/[id]/; items/ + items/[id]/
 │   │   ├── tasks/ e tasks/[id]/ # POST/PATCH/DELETE (validação em lib/tasks.ts)
 │   │   ├── completions/         # POST estado/hora; responde {ok, day} atualizado
 │   │   ├── me/                  # POST fuso (grava se null; force=true sobrescreve + re-sync)
@@ -76,12 +78,14 @@ src/
 │   ├── .well-known/oauth-authorization-server + oauth-protected-resource/[[...path]]  # descoberta (RFC 8414/9728)
 │   ├── oauth/authorize/         # tela de consentimento (sessão Google; sem sessão → /login?callbackUrl=…)
 │   ├── manifest.ts / sw.ts / login/ / layout.tsx (fontes Geist, appleWebApp, viewport)
-├── components/                  # ilhas client: DayBoard (hoje), TasksManager, TaskFormModal, TaskRow (ciclo de estados + UM horário: previsto/executado), StatsBoard/Stats* , SettingsClient, BottomNav, TimezoneSender, ServiceWorkerRegister
+├── components/                  # ilhas client: DayBoard (hoje), ShoppingBoard/ShoppingItemRow/ShoppingPlacesModal, TasksManager, TaskFormModal, TaskRow (ciclo de estados + UM horário: previsto/executado), StatsBoard/Stats* , SettingsClient, BottomNav, TimezoneSender, ServiceWorkerRegister
 └── lib/
     ├── domain/schedule.ts       # ★ funções PURAS — ÚNICA fonte de verdade de due/nominal/shiftOf/effectiveAt/nextOccurrence/alarmName
     ├── domain/states.ts         # ★ TaskState + STATE_META (conclusivo x CANCELLED) + allowedStates (isStateAllowed/nextStateAllowed/normalizeAllowedStates) — isomórfico
+    ├── domain/shopping.ts       # ★ validação, normalização, separação não marcados/marcados e sugestões (pure)
     ├── domain/stats.ts / day.ts # tipos/DTOs do payload (pure)
     ├── day.ts                   # getDayPayload — monta o dia (server-only)
+    ├── shopping.ts              # CRUD/toggle da lista de compras por local (server-only)
     ├── stats.ts                 # getStatsPayload (server-only)
     ├── sync.ts                  # ★ sincronização idempotente dos alarmes (diff desejado x AlarmQueued)
     ├── alarms.ts                # enqueue/delete no Cloud Tasks + fila local de dev
@@ -95,7 +99,7 @@ src/
     ├── mcp/server.ts            # ★ ferramentas MCP — só delegam aos serviços acima (nunca regra própria)
     ├── oauth-core.ts / oauth.ts / oauth-http.ts # OAuth: regras puras (testadas) / persistência / respostas HTTP+CORS
     ├── prisma.ts                # Proxy lazy (ver acima)
-    ├── dto.ts / dayCache.ts / clientEvents.ts / format.ts / env.ts
+    ├── dto.ts / dayCache.ts / shoppingCache.ts / clientEvents.ts / format.ts / env.ts
 prisma/schema.prisma + migrations/
 ```
 
@@ -112,6 +116,7 @@ prisma/schema.prisma + migrations/
 - `AlarmDelivered`: idempotência do disparo — única por `(taskId, localDate, kind)`, kind = NOMINAL | SHIFTED.
 - `OAuthClient` (cliente MCP registrado por DCR, público), `OAuthCode` (uso único, 5 min, hash), `OAuthGrant` (par access 1 h / refresh 90 dias que rotaciona; revogar = apagar a linha).
 - `AlarmQueued`: espelho do que está no Cloud Tasks (name = `alarm-{taskId}-{localDate}-{epochMs}`).
+- `ShoppingPlace` (`name`, `position`) + `ShoppingItem` (`placeId`, `name`, `quantity`, `checked`, `addedAt`, `checkedAt`): lista de compras por local dividida entre não marcados ("A comprar") e marcados ("Marcados").
 
 ## Regras de domínio (resumo operacional)
 
@@ -147,7 +152,7 @@ prisma/schema.prisma + migrations/
 
 - URL do conector: `{APP_URL}/api/mcp` (Ajustes → "Assistentes de IA" mostra e copia; lista e revoga conexões). Funciona como conector remoto no Claude/ChatGPT e no Claude Code (`claude mcp add --transport http daily-chores {APP_URL}/api/mcp`).
 - Fluxo: 401 com `WWW-Authenticate … resource_metadata` → cliente lê `/.well-known/oauth-protected-resource/api/mcp` → AS em `/.well-known/oauth-authorization-server` → `POST /api/oauth/register` → `/oauth/authorize` (login Google + "Permitir") → `POST /api/oauth/token`. `redirect_uri`: https, ou http só em loopback (porta livre, RFC 8252).
-- Ferramentas: `list_tasks`, `get_day`, `get_stats`, `get_workout_history` (leitura); `create_task`, `update_task` (patch; `exercises` = lista COMPLETA com ids), `delete_task`, `set_task_state`, `log_exercise`. As `instructions` do servidor explicam o domínio ao modelo.
+- Ferramentas: `list_tasks`, `get_day`, `get_stats`, `get_workout_history`, `get_shopping_list` (leitura); `create_task`, `update_task` (patch; `exercises` = lista COMPLETA com ids), `delete_task`, `set_task_state`, `log_exercise`; `create_shopping_place`, `update_shopping_place`, `delete_shopping_place`, `add_shopping_item`, `update_shopping_item`, `delete_shopping_item`. As `instructions` do servidor explicam o domínio ao modelo.
 - **Regra**: ferramenta nova chama um serviço de `lib/` (o mesmo das rotas REST) — se a lógica estiver dentro de uma rota, extraia para um serviço antes.
 - Dev: depois de mudar o schema, **reinicie o `next dev`** — o PrismaClient fica em `globalThis` e não enxerga modelos novos via HMR.
 

@@ -15,9 +15,11 @@ model User {
   email         String             @unique
   name          String?
   timezone      String? // IANA, ex.: America/Sao_Paulo
-  tasks         Task[]
-  subscriptions PushSubscription[]
-  oauthGrants   OAuthGrant[]
+  tasks          Task[]
+  subscriptions  PushSubscription[]
+  oauthGrants    OAuthGrant[]
+  shoppingPlaces ShoppingPlace[]
+  shoppingItems  ShoppingItem[]
 }
 
 model Task {
@@ -199,5 +201,42 @@ model OAuthGrant {
   createdAt        DateTime    @default(now())
   lastUsedAt       DateTime?
 
+  @@index([userId])
+}
+
+// ---------- Lista de compras ----------
+// Locais configuráveis pelo usuário (ex.: Supermercado, Feira, Farmácia).
+model ShoppingPlace {
+  id        String         @id @default(cuid())
+  userId    String
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  position  Int
+  createdAt DateTime       @default(now())
+  items     ShoppingItem[]
+
+  @@index([userId])
+}
+
+// Item persistente da lista de compras de um local ("despensa"):
+// checked = false → não marcado (precisa comprar);
+// checked = true  → marcado (já comprado/em casa; desmarcar volta para "a comprar").
+// addedAt registra quando o item entrou em "a comprar" (criação ou desmarcação),
+// preservando a ordem ao editar nome/quantidade.
+model ShoppingItem {
+  id        String        @id @default(cuid())
+  placeId   String
+  place     ShoppingPlace @relation(fields: [placeId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  quantity  String?
+  checked   Boolean       @default(false)
+  addedAt   DateTime      @default(now())
+  checkedAt DateTime?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([placeId])
   @@index([userId])
 }

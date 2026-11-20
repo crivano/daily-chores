@@ -18,6 +18,18 @@ const ITEMS = [
     ),
   },
   {
+    href: "/compras",
+    label: "Compras",
+    icon: (
+      // carrinho de supermercado
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-5 w-5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="8" cy="21" r="1" />
+        <circle cx="19" cy="21" r="1" />
+        <path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" />
+      </svg>
+    ),
+  },
+  {
     href: "/tarefas",
     label: "Tarefas",
     icon: (
@@ -63,7 +75,7 @@ export function BottomNav() {
               key={item.href}
               href={item.href}
               aria-current={active ? "page" : undefined}
-              className={`flex min-h-11 flex-1 flex-col items-center gap-1 rounded-xl px-2 py-1 text-[11px] font-medium transition ${
+              className={`flex min-h-11 flex-1 flex-col items-center gap-1 whitespace-nowrap rounded-xl px-1 py-1 text-[11px] font-medium transition ${
                 active
                   ? "text-indigo-600 dark:text-indigo-400"
                   : "text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"

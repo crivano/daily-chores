@@ -16,6 +16,15 @@ import { DEFAULT_TZ, dateInTZ } from "../domain/schedule";
 import { buildTaskDTOs, compareTaskDTOs } from "../dto";
 import { setExerciseLog } from "../exercises";
 import { prisma } from "../prisma";
+import {
+  addShoppingItem,
+  createShoppingPlace,
+  deleteShoppingItem,
+  deleteShoppingPlace,
+  getShoppingPayload,
+  updateShoppingItem,
+  updateShoppingPlace,
+} from "../shopping";
 import { getStatsPayload } from "../stats";
 import { createTask, deleteTask, updateTask } from "../taskService";
 import { getWorkoutHistory } from "../workoutHistory";
@@ -28,9 +37,10 @@ Conceitos:
 - Estados do dia: NONE (não marcado), DONE (feito), CANCELLED (cancelado — silencia mas não conta), HAPPY/INDIFFERENT/SAD (feito com humor), BOMB (falha registrada, ex.: estourou a dieta). allowedStates restringe os estados marcáveis (null/[] = todos).
 - Séries de exercícios: kind "WORKOUT" com lista de exercícios (sets, reps, durationSec, load + loadUnit kg|lb, restSec, notes). Marcar o último exercício do dia conclui a tarefa automaticamente. Ajustar valores de um exercício HOJE muda o plano dos próximos treinos. Todas as alterações feitas nos exercícios (cadastro ou ajustes no dia) ficam registradas com data/hora em get_workout_history (campo changes).
 - Refeições (cardápio): kind "MEAL" com mealPlan para consulta rápida no dia. Estrutura: options (≥ 1 variação, ex.: Jantar "Comida" e "Opção lanche"; name obrigatório quando há ≥ 2 variações), cada uma com items (food, quantity opcional, substitutions[] com food + quantity opcional) e notes opcional; além de notes gerais opcionais no mealPlan. Na tela Hoje o usuário abre o cardápio para consultar opções/substituições e marca o estado da tarefa normalmente.
+- Lista de compras: dividida por locais configuráveis (ex.: Supermercado, Feira). Cada local mantém itens persistentes separados entre não marcados (checked=false → a comprar) e marcados (checked=true → já comprados/em casa). Quando um item acaba, basta desmarcá-lo (ou re-adicioná-lo com add_shopping_item) para voltar para "a comprar".
 - Datas são "YYYY-MM-DD" no fuso do usuário; marcações valem para dias passados (correção) e futuros (adiantar). list_tasks e get_day informam a data de hoje.
 
-Boas práticas: consulte list_tasks antes de criar/alterar (para obter ids e evitar duplicatas); confirme com o usuário antes de excluir tarefas; em update_task com exercises, envie a lista COMPLETA (com o id dos exercícios mantidos — omitidos são arquivados).`;
+Boas práticas: consulte list_tasks (ou get_shopping_list para compras) antes de criar/alterar (para obter ids e evitar duplicatas); confirme com o usuário antes de excluir tarefas/locais/itens; em update_task com exercises, envie a lista COMPLETA (com o id dos exercícios mantidos — omitidos são arquivados).`;
 
 const STATE_VALUES = ["DONE", "CANCELLED", "HAPPY", "INDIFFERENT", "SAD", "BOMB"] as const;
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
@@ -290,6 +300,135 @@ export function buildMcpServer(userId: string): McpServer {
         : null;
       const r = await setExerciseLog({ userId, exerciseId, date: date ?? null, done, values: patch });
       return r.ok ? json(await getDayPayload(userId, r.localDate)) : fail(r.message);
+    },
+  );
+
+  // ---------------- lista de compras ----------------
+
+  server.registerTool(
+    "get_shopping_list",
+    {
+      title: "Ver lista de compras",
+      description:
+        "Lista todos os locais configurados (ex.: Supermercado, Feira) com seus itens divididos em não marcados (checked=false, a comprar) e marcados (checked=true, já comprados).",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => json(await getShoppingPayload(userId)),
+  );
+
+  server.registerTool(
+    "create_shopping_place",
+    {
+      title: "Criar local de compras",
+      description: "Cria um novo local na lista de compras (ex.: Supermercado, Feira, Farmácia).",
+      inputSchema: z.object({
+        name: z.string().describe("Nome do local (máx. 50)."),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ name }) => {
+      const r = await createShoppingPlace(userId, { name });
+      return r.ok ? json(r.data) : fail(r.message);
+    },
+  );
+
+  server.registerTool(
+    "update_shopping_place",
+    {
+      title: "Alterar local de compras",
+      description: "Renomeia ou reordena um local de compras (position 0 = primeiro).",
+      inputSchema: z.object({
+        placeId: z.string().describe("Id do local."),
+        name: z.string().optional().describe("Novo nome do local (máx. 50)."),
+        position: z.number().int().min(0).optional().describe("Nova posição na lista de locais (0 = primeiro)."),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ placeId, name, position }) => {
+      const r = await updateShoppingPlace(userId, placeId, {
+        ...(name !== undefined ? { name } : {}),
+        ...(position !== undefined ? { position } : {}),
+      });
+      return r.ok ? json(r.data) : fail(r.message);
+    },
+  );
+
+  server.registerTool(
+    "delete_shopping_place",
+    {
+      title: "Excluir local de compras",
+      description: "Exclui um local de compras e todos os seus itens (irreversível). Confirme com o usuário antes.",
+      inputSchema: z.object({
+        placeId: z.string().describe("Id do local."),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ placeId }) => {
+      const r = await deleteShoppingPlace(userId, placeId);
+      return r.ok ? json({ deleted: placeId, shopping: r.data }) : fail(r.message);
+    },
+  );
+
+  server.registerTool(
+    "add_shopping_item",
+    {
+      title: "Adicionar item à lista de compras",
+      description:
+        "Adiciona um item a um local (ou desmarca automaticamente caso ele já exista entre os marcados daquele local).",
+      inputSchema: z.object({
+        placeId: z.string().describe("Id do local (obtenha via get_shopping_list)."),
+        name: z.string().describe("Nome do item (máx. 100)."),
+        quantity: z.string().max(60).nullable().optional().describe("Quantidade ou observação (ex.: '2 caixas', '1 kg')."),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ placeId, name, quantity }) => {
+      const r = await addShoppingItem(userId, { placeId, name, quantity });
+      return r.ok ? json(r.data) : fail(r.message);
+    },
+  );
+
+  server.registerTool(
+    "update_shopping_item",
+    {
+      title: "Atualizar item de compra",
+      description:
+        "Marca/desmarca um item (checked=false coloca em 'a comprar'; checked=true coloca em 'marcados'), edita nome/quantidade ou move para outro local.",
+      inputSchema: z.object({
+        itemId: z.string().describe("Id do item."),
+        name: z.string().optional().describe("Novo nome (máx. 100)."),
+        quantity: z.string().max(60).nullable().optional().describe("Quantidade/obs. (null ou '' limpa)."),
+        checked: z.boolean().optional().describe("false = a comprar; true = já comprado/marcado."),
+        placeId: z.string().optional().describe("Id de outro local para mover o item."),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ itemId, name, quantity, checked, placeId }) => {
+      const r = await updateShoppingItem(userId, itemId, {
+        ...(name !== undefined ? { name } : {}),
+        ...(quantity !== undefined ? { quantity } : {}),
+        ...(checked !== undefined ? { checked } : {}),
+        ...(placeId !== undefined ? { placeId } : {}),
+      });
+      return r.ok ? json(r.data) : fail(r.message);
+    },
+  );
+
+  server.registerTool(
+    "delete_shopping_item",
+    {
+      title: "Excluir item de compra",
+      description:
+        "Exclui permanentemente um item da lista de compras. Prefira update_shopping_item com checked=true se for um item recorrente que já foi comprado.",
+      inputSchema: z.object({
+        itemId: z.string().describe("Id do item."),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ itemId }) => {
+      const r = await deleteShoppingItem(userId, itemId);
+      return r.ok ? json({ deleted: itemId, shopping: r.data }) : fail(r.message);
     },
   );
 
